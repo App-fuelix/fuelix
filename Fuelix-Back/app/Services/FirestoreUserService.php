@@ -256,6 +256,20 @@ class FirestoreUserService
         return is_array($json) ? $this->decodeDocument($json) : null;
     }
 
+    public function createUserFromFirebase(array $data): array
+    {
+        $now = CarbonImmutable::now()->toIso8601String();
+
+        $data['created_at'] = $now;
+        $data['updated_at'] = $now;
+
+        $document = $this->request('POST', $this->usersCollectionUrl(), [
+            'fields' => $this->encodeFields($data),
+        ]);
+
+        return $this->decodeDocument($document);
+    }
+
     public function createUser(string $name, string $email, string $plainPassword, ?string $phone = null, ?string $city = null): array
     {
         $now = CarbonImmutable::now()->toIso8601String();

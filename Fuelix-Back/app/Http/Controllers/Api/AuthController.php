@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Services\FirestoreUserService;
+use App\Services\FirebaseTokenService;
 use Illuminate\Http\Request;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
@@ -11,8 +12,10 @@ use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
-    public function __construct(private readonly FirestoreUserService $firestoreUsers)
-    {
+    public function __construct(
+        private readonly FirestoreUserService $firestoreUsers,
+        private readonly FirebaseTokenService $firebaseTokens,
+    ) {
     }
 
     // REGISTER
@@ -193,5 +196,83 @@ class AuthController extends Controller
         $user->update(['password' => $newHash]);
 
         return response()->json(['message' => 'Mot de passe modifié avec succès']);
+    }
+
+    // FIREBASE REGISTER
+    public function firebaseRegister(Request $request)
+    {
+        $request->validate([
+            'firebase_token' => 'required|string',
+            'name'           => 'required|string|max:255',
+            'email'          => 'required|email',
+            'phone'          => 'nullable|string|max:20',
+            'city'           => 'nullable|string|max:100',
+        ]);
+
+        try {
+            $payload = $this->firebaseTokens->verifyIdToken($request->firebase_token);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Invalid Firebase token: ' . $e->getMessage()], 401);
+        }
+
+        // Store profile in Firestore
+        $existingFirestoreUser = $this->firestoreUsers->findByEmail($request->email);
+
+        if (!$existingFirestoreUser) {
+            $data = [
+                'name'  => $request->name,
+                'email' => strtolower($request->email),
+                'uid'   => $payload['uid'] ?? $payload['sub'] ?? '',
+            ];
+            if ($request->filled('phone')) $data['phone'] = $request->phone;
+            if ($request->filled('city'))  $data['city']  = $request->city;
+
+            $firestoreUser = $this->firestoreUsers->createUserFromFirebase($data);
+        } else {
+            $firestoreUser = $existingFirestoreUser;
+        }
+
+        $user = User::firstOrNew(['email' => $firestoreUser['email']]);
+        $user->name = $firestoreUser['name'];
+        $user->password = bcrypt($payload['sub']); // placeholder, auth is via Firebase
+        $user->save();
+
+        $token = $user->createToken('fuelix-token')->plainTextToken;
+
+        unset($firestoreUser['password']);
+
+        return response()->json(['user' => $firestoreUser, 'token' => $token], 201);
+    }
+
+    // FIREBASE LOGIN
+    public function firebaseLogin(Request $request)
+    {
+        $request->validate(['firebase_token' => 'required|string']);
+
+        try {
+            $payload = $this->firebaseTokens->verifyIdToken($request->firebase_token);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Invalid Firebase token: ' . $e->getMessage()], 401);
+        }
+
+        $email = $payload['email'] ?? null;
+
+        if (!$email) {
+            return response()->json(['message' => 'Email not found in Firebase token'], 401);
+        }
+
+        $firestoreUser = $this->firestoreUsers->findByEmail($email);
+
+        $user = User::firstOrNew(['email' => $email]);
+        $user->name = $firestoreUser['name'] ?? ($user->name ?: $email);
+        $user->password = $user->password ?: bcrypt($payload['sub']);
+        $user->save();
+
+        $token = $user->createToken('fuelix-token')->plainTextToken;
+
+        $userData = $firestoreUser ?? ['email' => $email, 'name' => $user->name];
+        unset($userData['password']);
+
+        return response()->json(['user' => $userData, 'token' => $token]);
     }
 }

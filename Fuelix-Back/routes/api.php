@@ -10,6 +10,10 @@ use Illuminate\Support\Str;
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class,'login']);
 
+// Firebase Auth routes
+Route::post('/firebase/register', [AuthController::class, 'firebaseRegister']);
+Route::post('/firebase/login', [AuthController::class, 'firebaseLogin']);
+
 Route::middleware('auth:sanctum')->group(function () {
 
     Route::post('/logout', [AuthController::class,'logout']);
