@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../services/firebase_auth_service.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import 'home_screen.dart';
@@ -23,7 +25,6 @@ class _SignUpScreenDarkState extends State<SignUpScreenDark> {
       _showError('Passwords do not match!');
       return;
     }
-
     final name = _nameController.text.trim();
     final email = _emailController.text.trim();
     final password = _passwordController.text;
@@ -36,11 +37,13 @@ class _SignUpScreenDarkState extends State<SignUpScreenDark> {
     setState(() => _isLoading = true);
 
     try {
-      final result = await ApiService.register(
+      final firebaseResult = await FirebaseAuthService.register(email: email, password: password);
+      final firebaseToken = firebaseResult['token'] as String;
+
+      final result = await ApiService.registerWithFirebase(
+        firebaseToken: firebaseToken,
         name: name,
         email: email,
-        password: password,
-        passwordConfirmation: _confirmPasswordController.text,
         phone: _phoneController.text.trim(),
         city: _cityController.text.trim(),
       );
@@ -57,6 +60,7 @@ class _SignUpScreenDarkState extends State<SignUpScreenDark> {
           Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomeScreen()));
         }
       } else {
+        await FirebaseAuthService.currentUser?.delete();
         final errors = body['errors'] as Map<String, dynamic>?;
         if (errors != null) {
           final firstError = errors.values.first;
@@ -65,10 +69,21 @@ class _SignUpScreenDarkState extends State<SignUpScreenDark> {
           _showError(body['message'] ?? 'Registration failed.');
         }
       }
+    } on FirebaseAuthException catch (e) {
+      _showError(_firebaseError(e.code));
     } catch (_) {
       _showError('Could not connect to server. Check your network.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  String _firebaseError(String code) {
+    switch (code) {
+      case 'email-already-in-use': return 'This email is already registered.';
+      case 'invalid-email': return 'Invalid email address.';
+      case 'weak-password': return 'Password must be at least 6 characters.';
+      default: return 'Registration failed. Please try again.';
     }
   }
 

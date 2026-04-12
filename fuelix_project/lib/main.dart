@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'screens/splash_screen.dart';
 import 'screens/splash_screen_dark.dart';
 import 'screens/login_screen.dart';
@@ -8,9 +9,13 @@ import 'screens/signup_screen_dark.dart';
 import 'screens/forgot_password_screen.dart';
 import 'screens/forgot_password_dark.dart';
 import 'screens/home_screen.dart';
-import 'services/auth_service.dart';
+import 'services/firebase_auth_service.dart';
 
-void main() => runApp(const FuelixApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+  runApp(const FuelixApp());
+}
 
 class FuelixApp extends StatelessWidget {
   const FuelixApp({super.key});
@@ -59,27 +64,17 @@ class _AppEntryState extends State<AppEntry> {
   }
 
   Future<void> _init() async {
-    // Show splash for 3 seconds
     await Future.delayed(const Duration(seconds: 3));
     if (!mounted) return;
 
-    // Check if user is already logged in
-    bool loggedIn = false;
-    try {
-      loggedIn = await AuthService.isLoggedIn().timeout(const Duration(seconds: 3));
-    } catch (_) {
-      loggedIn = false;
-    }
+    final loggedIn = FirebaseAuthService.isLoggedIn;
 
     if (!mounted) return;
+    final isDark = MediaQuery.of(context).platformBrightness == Brightness.dark;
 
     if (loggedIn) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
-      );
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomeScreen()));
     } else {
-      final isDark = MediaQuery.of(context).platformBrightness == Brightness.dark;
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => isDark ? const LoginScreenDark() : const LoginScreen()),

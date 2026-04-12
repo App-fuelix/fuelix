@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../services/firebase_auth_service.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import 'home_screen.dart';
@@ -26,7 +28,12 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final result = await ApiService.login(email, password);
+      // 1. Firebase Auth login
+      final firebaseResult = await FirebaseAuthService.login(email: email, password: password);
+      final firebaseToken = firebaseResult['token'] as String;
+
+      // 2. Send Firebase token to Laravel to get Sanctum token
+      final result = await ApiService.loginWithFirebase(firebaseToken);
       final status = result['status'] as int;
       final body = result['body'] as Map<String, dynamic>;
 
@@ -42,10 +49,22 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         _showError(body['message'] ?? 'Login failed.');
       }
+    } on FirebaseAuthException catch (e) {
+      _showError(_firebaseError(e.code));
     } catch (_) {
       _showError('Could not connect to server. Check your network.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  String _firebaseError(String code) {
+    switch (code) {
+      case 'user-not-found': return 'No account found with this email.';
+      case 'wrong-password': return 'Incorrect password.';
+      case 'invalid-email': return 'Invalid email address.';
+      case 'user-disabled': return 'This account has been disabled.';
+      default: return 'Login failed. Please try again.';
     }
   }
 

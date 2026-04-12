@@ -26,6 +26,38 @@ class ApiService {
     return {'status': res.statusCode, 'body': jsonDecode(res.body)};
   }
 
+  /// Login via Firebase ID token
+  static Future<Map<String, dynamic>> loginWithFirebase(String firebaseToken) async {
+    final res = await http.post(
+      Uri.parse('$baseUrl/firebase/login'),
+      headers: _headers(),
+      body: jsonEncode({'firebase_token': firebaseToken}),
+    );
+    return {'status': res.statusCode, 'body': jsonDecode(res.body)};
+  }
+
+  /// Register via Firebase ID token + profile data
+  static Future<Map<String, dynamic>> registerWithFirebase({
+    required String firebaseToken,
+    required String name,
+    required String email,
+    String? phone,
+    String? city,
+  }) async {
+    final res = await http.post(
+      Uri.parse('$baseUrl/firebase/register'),
+      headers: _headers(),
+      body: jsonEncode({
+        'firebase_token': firebaseToken,
+        'name': name,
+        'email': email,
+        if (phone != null && phone.isNotEmpty) 'phone': phone,
+        if (city != null && city.isNotEmpty) 'city': city,
+      }),
+    );
+    return {'status': res.statusCode, 'body': jsonDecode(res.body)};
+  }
+
   static Future<Map<String, dynamic>> register({
     required String name,
     required String email,

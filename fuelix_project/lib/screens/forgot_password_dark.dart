@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import '../services/api_service.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../services/firebase_auth_service.dart';
 
 class ForgotPasswordDark extends StatefulWidget {
   const ForgotPasswordDark({super.key});
@@ -22,18 +23,15 @@ class _ForgotPasswordDarkState extends State<ForgotPasswordDark> {
     setState(() => _isLoading = true);
 
     try {
-      final result = await ApiService.forgotPassword(email);
-      final status = result['status'] as int;
-      final body = result['body'] as Map<String, dynamic>;
-
-      if (status == 200) {
-        setState(() => _sent = true);
-        _showMessage(body['message'] ?? 'Reset link sent!');
-      } else {
-        _showMessage(body['message'] ?? 'Failed to send reset link.', isError: true);
-      }
+      await FirebaseAuthService.sendPasswordReset(email);
+      setState(() => _sent = true);
+      _showMessage('Reset link sent! Check your inbox.');
+    } on FirebaseAuthException catch (e) {
+      _showMessage(e.code == 'user-not-found'
+          ? 'No account found with this email.'
+          : 'Failed to send reset link.', isError: true);
     } catch (_) {
-      _showMessage('Could not connect to server.', isError: true);
+      _showMessage('Could not connect. Try again.', isError: true);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -41,10 +39,7 @@ class _ForgotPasswordDarkState extends State<ForgotPasswordDark> {
 
   void _showMessage(String msg, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: isError ? Colors.redAccent : Colors.green,
-      ),
+      SnackBar(content: Text(msg), backgroundColor: isError ? Colors.redAccent : Colors.green),
     );
   }
 
