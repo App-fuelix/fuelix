@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "962776218022",
+    "project_id": "fuelix-18bf3",
+    "storage_bucket": "fuelix-18bf3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:962776218022:android:a29749a6cd0238caa1b767",
+        "android_client_info": {
+          "package_name": "com.example.fuelix_project"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBqtKoDPYk-nQC-82MB2K27kvxghkUjfw8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
