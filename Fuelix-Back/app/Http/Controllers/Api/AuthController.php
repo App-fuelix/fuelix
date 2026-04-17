@@ -125,13 +125,14 @@ class AuthController extends Controller
         $request->validate([
             'name'  => 'sometimes|string|max:255',
             'email' => 'sometimes|email',
+            'phone' => 'sometimes|nullable|string|max:20',
+            'city'  => 'sometimes|nullable|string|max:100',
         ]);
 
         $firestoreUser = $this->firestoreUsers->findByEmail($user->email);
 
         if ($request->filled('email') && strtolower($request->email) !== strtolower($user->email)) {
             $alreadyTaken = $this->firestoreUsers->findByEmail($request->email);
-
             if ($alreadyTaken) {
                 throw ValidationException::withMessages([
                     'email' => ['This email is already registered.'],
@@ -140,22 +141,27 @@ class AuthController extends Controller
         }
 
         if ($firestoreUser) {
-            $updatedFirestoreUser = $this->firestoreUsers->updateUser($firestoreUser['id'], [
-                'name' => $request->input('name', $firestoreUser['name']),
+            $updateData = [
+                'name'  => $request->input('name', $firestoreUser['name']),
                 'email' => strtolower($request->input('email', $firestoreUser['email'])),
-            ]);
+            ];
+
+            if ($request->has('phone')) $updateData['phone'] = $request->phone;
+            if ($request->has('city'))  $updateData['city']  = $request->city;
+
+            $updatedFirestoreUser = $this->firestoreUsers->updateUser($firestoreUser['id'], $updateData);
 
             if ($updatedFirestoreUser) {
                 $user->update([
-                    'name' => $updatedFirestoreUser['name'],
+                    'name'  => $updatedFirestoreUser['name'],
                     'email' => $updatedFirestoreUser['email'],
                 ]);
 
                 unset($updatedFirestoreUser['password']);
 
                 return response()->json([
-                    'message' => 'Profil mis a jour',
-                    'user' => $updatedFirestoreUser,
+                    'message' => 'Profile updated successfully',
+                    'user'    => $updatedFirestoreUser,
                 ]);
             }
         }
@@ -163,7 +169,7 @@ class AuthController extends Controller
         $user->update($request->only('name', 'email'));
 
         return response()->json([
-            'message' => 'Profil mis à jour',
+            'message' => 'Profile updated successfully',
             'user'    => $user->fresh(),
         ]);
     }

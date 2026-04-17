@@ -3,180 +3,302 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\FuelCard;
+use App\Services\FirestoreService;
+use App\Services\FirestoreUserService;
 use Illuminate\Http\Request;
+use Carbon\Carbon;
 
 class CardController extends Controller
 {
-    // Afficher la carte de l'utilisateur
-    public function show(Request $request)
+    public function __construct(
+        private readonly FirestoreService $firestore,
+        private readonly FirestoreUserService $firestoreUsers,
+    ) {}
+
+    private function getFirestoreUid(Request $request): ?string
     {
-        $user = $request->user();
-        $card = $user->fuelCards()->first();
-
-        if (!$card) {
-            return response()->json([
-                'message' => 'Aucune carte trouvée'
-            ], 404);
-        }
-
-        // Vérifier et mettre à jour le statut si expirée
-        $card->checkAndUpdateStatus();
-
-        return response()->json([
-            'id'                  => $card->id,
-            'masked_number'       => $card->masked_number,
-            'card_number'         => $card->card_number, // Pour les tests, à retirer en prod
-            'issuer'              => $card->issuer,
-            'valid_thru'          => $card->valid_thru,
-            'balance'             => number_format($card->balance, 2) . ' TND',
-            'balance_raw'         => $card->balance,
-            'authorized_products' => $card->authorized_products,
-            'status'              => $card->status,
-            'is_expired'          => $card->isExpired(),
-            'can_pay'             => $card->balance > 0 && $card->status === 'active',
-            'vehicle'             => $card->vehicle ? [
-                'id' => $card->vehicle->id,
-                'plate_number' => $card->vehicle->plate_number,
-                'model' => $card->vehicle->model,
-            ] : null,
-        ]);
+        $user = $this->firestoreUsers->findByEmail($request->user()->email);
+        return $user['id'] ?? null;
     }
 
-    // Recharger la carte
-    public function recharge(Request $request)
-    {
-        $request->validate([
-            'amount' => 'required|numeric|min:1|max:1000'
-        ]);
-
-        $user = $request->user();
-        $card = $user->fuelCards()->first();
-
-        if (!$card) {
-            return response()->json(['message' => 'Carte non trouvée'], 404);
-        }
-
-        if ($card->recharge($request->amount)) {
-            return response()->json([
-                'message' => 'Carte rechargée avec succès',
-                'new_balance' => number_format($card->balance, 2) . ' TND',
-                'balance_raw' => $card->balance,
-            ]);
-        }
-
-        return response()->json(['message' => 'Échec de la recharge'], 400);
-    }
-
-    // Historique des transactions de la carte
-    public function transactions(Request $request)
-    {
-        $user = $request->user();
-        $card = $user->fuelCards()->first();
-
-        if (!$card) {
-            return response()->json(['message' => 'Carte non trouvée'], 404);
-        }
-
-        $transactions = $card->transactions()
-            ->with('vehicle:id,plate_number,model')
-            ->orderBy('date', 'desc')
-            ->limit(20)
-            ->get()
-            ->map(function ($transaction) {
-                return [
-                    'id' => $transaction->id,
-                    'date' => $transaction->date->format('Y-m-d H:i'),
-                    'amount' => number_format($transaction->amount, 2) . ' TND',
-                    'quantity_liters' => $transaction->quantity_liters . 'L',
-                    'price_per_liter' => number_format($transaction->price_per_liter, 3) . ' TND',
-                    'station_name' => $transaction->station_name,
-                    'vehicle' => $transaction->vehicle ? [
-                        'plate_number' => $transaction->vehicle->plate_number,
-                        'model' => $transaction->vehicle->model,
-                    ] : null,
-                ];
-            });
-
-        return response()->json([
-            'card_id' => $card->id,
-            'transactions' => $transactions,
-            'total_count' => $card->transactions()->count(),
-        ]);
-    }
-
-    // Lister toutes les cartes de l'utilisateur
+    // GET /api/fuel-cards — list all cards
     public function index(Request $request)
     {
-        $user = $request->user();
-        $cards = $user->fuelCards()->with('vehicle')->get();
+        $uid = $this->getFirestoreUid($request);
+        if (!$uid) return response()->json(['message' => 'User not found'], 404);
+
+        $cards = $this->firestore->subList('users', $uid, 'fuel_cards');
 
         return response()->json([
-            'cards' => $cards->map(function ($card) {
-                $card->checkAndUpdateStatus();
-                return [
-                    'id' => $card->id,
-                    'masked_number' => $card->masked_number,
-                    'issuer' => $card->issuer,
-                    'valid_thru' => $card->valid_thru,
-                    'balance' => number_format($card->balance, 2) . ' TND',
-                    'status' => $card->status,
-                    'is_expired' => $card->isExpired(),
-                    'vehicle' => $card->vehicle ? $card->vehicle->plate_number : null,
-                ];
-            }),
+            'cards' => array_map(fn($card) => $this->formatCard($card), $cards),
         ]);
     }
 
-    // Historique complet des transactions de l'utilisateur
+    // GET /api/fuel-cards/show — get primary card
+    public function show(Request $request)
+    {
+        $uid = $this->getFirestoreUid($request);
+        if (!$uid) return response()->json(['message' => 'User not found'], 404);
+
+        $cards = $this->firestore->subList('users', $uid, 'fuel_cards');
+
+        if (empty($cards)) {
+            return response()->json(['message' => 'Aucune carte trouvée'], 404);
+        }
+
+        $card = $cards[0];
+        return response()->json($this->formatCard($card, detailed: true));
+    }
+
+    // POST /api/fuel-cards/recharge
+    public function recharge(Request $request)
+    {
+        $request->validate(['amount' => 'required|numeric|min:1|max:1000']);
+
+        $uid = $this->getFirestoreUid($request);
+        if (!$uid) return response()->json(['message' => 'User not found'], 404);
+
+        $cards = $this->firestore->subList('users', $uid, 'fuel_cards');
+        if (empty($cards)) return response()->json(['message' => 'Carte non trouvée'], 404);
+
+        $card = $cards[0];
+        $newBalance = (float)($card['balance'] ?? 0) + (float)$request->amount;
+
+        $updated = $this->firestore->subUpdate('users', $uid, 'fuel_cards', $card['id'], [
+            'balance' => $newBalance,
+        ]);
+
+        return response()->json([
+            'message' => 'Carte rechargée avec succès',
+            'new_balance' => number_format($newBalance, 2) . ' TND',
+            'balance_raw' => $newBalance,
+        ]);
+    }
+
+    // GET /api/fuel-cards/transactions — last 20 transactions of primary card
+    public function transactions(Request $request)
+    {
+        $uid = $this->getFirestoreUid($request);
+        if (!$uid) return response()->json(['message' => 'User not found'], 404);
+
+        $cards = $this->firestore->subList('users', $uid, 'fuel_cards');
+        if (empty($cards)) return response()->json(['message' => 'Carte non trouvée'], 404);
+
+        $card = $cards[0];
+        $transactions = $this->firestore->subList('users', $uid, 'transactions');
+
+        // Filter by card and sort by date desc
+        $filtered = array_filter($transactions, fn($t) => ($t['fuel_card_id'] ?? '') === $card['id']);
+        usort($filtered, fn($a, $b) => strcmp($b['date'] ?? '', $a['date'] ?? ''));
+        $filtered = array_slice(array_values($filtered), 0, 20);
+
+        return response()->json([
+            'card_id' => $card['id'],
+            'transactions' => array_map(fn($t) => $this->formatTransaction($t), $filtered),
+            'total_count' => count($filtered),
+        ]);
+    }
+
+    // GET /api/fuel-cards/history — full history with filters
     public function history(Request $request)
     {
-        $user = $request->user();
+        $uid = $this->getFirestoreUid($request);
+        if (!$uid) return response()->json(['message' => 'User not found'], 404);
 
-        $query = $user->transactions()
-            ->with('vehicle:id,plate_number,model')
-            ->orderBy('date', 'desc');
+        $transactions = $this->firestore->subList('users', $uid, 'transactions');
 
-        // Filtre par mois
+        // Filter by month
         if ($request->month) {
-            $query->whereMonth('date', $request->month)
-                  ->whereYear('date', $request->year ?? now()->year);
+            $year = $request->year ?? now()->year;
+            $transactions = array_filter($transactions, function ($t) use ($request, $year) {
+                $date = Carbon::parse($t['date'] ?? '');
+                return $date->month == $request->month && $date->year == $year;
+            });
         }
 
-        // Filtre par station
+        // Filter by station
         if ($request->station) {
-            $query->where('station_name', 'like', '%' . $request->station . '%');
+            $transactions = array_filter($transactions, fn($t) =>
+                str_contains(strtolower($t['station_name'] ?? ''), strtolower($request->station))
+            );
         }
 
-        $transactions = $query->get()->map(function ($t) {
-            return [
-                'id'              => $t->id,
-                'date'            => $t->date->format('Y-m-d'),
-                'time'            => $t->date->format('H:i'),
-                'month_label'     => $t->date->format('M Y'),
-                'amount'          => number_format($t->amount, 2),
-                'quantity_liters' => number_format($t->quantity_liters, 1),
-                'price_per_liter' => number_format($t->price_per_liter, 3),
-                'station_name'    => $t->station_name,
-                'vehicle'         => $t->vehicle ? [
-                    'plate_number' => $t->vehicle->plate_number,
-                    'model'        => $t->vehicle->model,
-                ] : null,
-            ];
-        });
+        // Sort by date desc
+        usort($transactions, fn($a, $b) => strcmp($b['date'] ?? '', $a['date'] ?? ''));
+        $transactions = array_values($transactions);
 
-        // Grouper par mois
-        $grouped = $transactions->groupBy('month_label');
+        $formatted = array_map(fn($t) => $this->formatTransaction($t, full: true), $transactions);
 
-        // Stats globales
-        $total_spent = $user->transactions()->sum(\DB::raw('quantity_liters * price_per_liter'));
-        $total_liters = $user->transactions()->sum('quantity_liters');
+        // Group by month label
+        $grouped = [];
+        foreach ($formatted as $t) {
+            $grouped[$t['month_label']][] = $t;
+        }
+
+        $totalSpent = array_sum(array_map(fn($t) => (float)($t['amount'] ?? 0), $formatted));
+        $totalLiters = array_sum(array_map(fn($t) => (float)($t['quantity_liters'] ?? 0), $formatted));
 
         return response()->json([
             'transactions' => $grouped,
-            'total_count'  => $transactions->count(),
-            'total_spent'  => number_format($total_spent, 2) . ' TND',
-            'total_liters' => number_format($total_liters, 1) . ' L',
+            'total_count'  => count($formatted),
+            'total_spent'  => number_format($totalSpent, 2) . ' TND',
+            'total_liters' => number_format($totalLiters, 1) . ' L',
         ]);
+    }
+
+    // POST /api/fuel-cards — create a new card
+    public function store(Request $request)
+    {
+        $request->validate([
+            'card_number'  => 'required|string',
+            'issuer'       => 'nullable|string',
+            'expiry_month' => 'nullable|string',
+            'expiry_year'  => 'nullable|string',
+            'balance'      => 'nullable|numeric',
+        ]);
+
+        $uid = $this->getFirestoreUid($request);
+        if (!$uid) return response()->json(['message' => 'User not found'], 404);
+
+        $card = $this->firestore->subCreate('users', $uid, 'fuel_cards', [
+            'card_number'  => $request->card_number,
+            'issuer'       => $request->input('issuer', 'Fuelix'),
+            'expiry_month' => $request->input('expiry_month', '12'),
+            'expiry_year'  => $request->input('expiry_year', '27'),
+            'balance'      => (float) $request->input('balance', 0),
+            'status'       => 'active',
+        ]);
+
+        return response()->json(['message' => 'Card created', 'card' => $this->formatCard($card)], 201);
+    }
+
+    // POST /api/transactions — create a transaction
+    public function storeTransaction(Request $request)
+    {
+        $request->validate([
+            'fuel_card_id'    => 'required|string',
+            'amount'          => 'required|numeric',
+            'quantity_liters' => 'required|numeric',
+            'price_per_liter' => 'required|numeric',
+            'station_name'    => 'nullable|string',
+            'date'            => 'nullable|string',
+        ]);
+
+        $uid = $this->getFirestoreUid($request);
+        if (!$uid) return response()->json(['message' => 'User not found'], 404);
+
+        // Deduct from card balance
+        $card = $this->firestore->subGet('users', $uid, 'fuel_cards', $request->fuel_card_id);
+        if ($card) {
+            $newBalance = max(0, (float)($card['balance'] ?? 0) - (float)$request->amount);
+            $this->firestore->subUpdate('users', $uid, 'fuel_cards', $card['id'], ['balance' => $newBalance]);
+        }
+
+        $transaction = $this->firestore->subCreate('users', $uid, 'transactions', [
+            'fuel_card_id'    => $request->fuel_card_id,
+            'amount'          => (float) $request->amount,
+            'quantity_liters' => (float) $request->quantity_liters,
+            'price_per_liter' => (float) $request->price_per_liter,
+            'station_name'    => $request->input('station_name', ''),
+            'date'            => $request->input('date', now()->toIso8601String()),
+        ]);
+
+        return response()->json(['message' => 'Transaction recorded', 'transaction' => $transaction], 201);
+    }
+
+    // GET /api/vehicles
+    public function listVehicles(Request $request)
+    {
+        $uid = $this->getFirestoreUid($request);
+        if (!$uid) return response()->json(['message' => 'User not found'], 404);
+
+        $vehicles = $this->firestore->subList('users', $uid, 'vehicles');
+        return response()->json(['vehicles' => $vehicles]);
+    }
+
+    // POST /api/vehicles
+    public function storeVehicle(Request $request)
+    {
+        $request->validate([
+            'plate_number'        => 'required|string',
+            'model'               => 'required|string',
+            'fuel_type'           => 'required|string',
+            'average_consumption' => 'nullable|numeric',
+        ]);
+
+        $uid = $this->getFirestoreUid($request);
+        if (!$uid) return response()->json(['message' => 'User not found'], 404);
+
+        $vehicle = $this->firestore->subCreate('users', $uid, 'vehicles', [
+            'plate_number'        => $request->plate_number,
+            'model'               => $request->model,
+            'fuel_type'           => $request->fuel_type,
+            'average_consumption' => (float) $request->input('average_consumption', 0),
+        ]);
+
+        return response()->json(['message' => 'Vehicle added', 'vehicle' => $vehicle], 201);
+    }
+
+    // -------------------------------------------------------------------------
+    // Formatters
+    // -------------------------------------------------------------------------
+
+    private function formatCard(array $card, bool $detailed = false): array
+    {
+        $balance = (float)($card['balance'] ?? 0);
+        $expiryMonth = $card['expiry_month'] ?? '12';
+        $expiryYear = substr($card['expiry_year'] ?? '27', -2);
+        $cardNumber = $card['card_number'] ?? '';
+        $maskedNumber = strlen($cardNumber) >= 4 ? '**** ' . substr($cardNumber, -4) : '****';
+        $status = $card['status'] ?? 'active';
+
+        $base = [
+            'id'             => $card['id'],
+            'masked_number'  => $maskedNumber,
+            'issuer'         => $card['issuer'] ?? 'Fuelix',
+            'valid_thru'     => "{$expiryMonth}/{$expiryYear}",
+            'balance'        => number_format($balance, 2) . ' TND',
+            'balance_raw'    => $balance,
+            'status'         => $status,
+            'can_pay'        => $balance > 0 && $status === 'active',
+        ];
+
+        if ($detailed) {
+            $base['authorized_products'] = $card['authorized_products'] ?? null;
+            $base['is_expired'] = $this->isExpired($card);
+        }
+
+        return $base;
+    }
+
+    private function formatTransaction(array $t, bool $full = false): array
+    {
+        $date = Carbon::parse($t['date'] ?? now());
+        $base = [
+            'id'              => $t['id'],
+            'date'            => $date->format('Y-m-d'),
+            'time'            => $date->format('H:i'),
+            'amount'          => number_format((float)($t['amount'] ?? 0), 2),
+            'quantity_liters' => number_format((float)($t['quantity_liters'] ?? 0), 1),
+            'price_per_liter' => number_format((float)($t['price_per_liter'] ?? 0), 3),
+            'station_name'    => $t['station_name'] ?? '',
+        ];
+
+        if ($full) {
+            $base['month_label'] = $date->format('M Y');
+        }
+
+        return $base;
+    }
+
+    private function isExpired(array $card): bool
+    {
+        $month = $card['expiry_month'] ?? null;
+        $year  = $card['expiry_year'] ?? null;
+        if (!$month || !$year) return false;
+
+        $fullYear = strlen((string)$year) === 2 ? '20' . $year : $year;
+        $expiry = Carbon::createFromDate($fullYear, $month, 1)->endOfMonth();
+        return now()->isAfter($expiry);
     }
 }

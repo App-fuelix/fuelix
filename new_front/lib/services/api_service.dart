@@ -113,4 +113,40 @@ class ApiService {
     );
     return {'status': res.statusCode, 'body': jsonDecode(res.body)};
   }
+
+  static Future<Map<String, dynamic>> updateProfile({
+    required String token,
+    String? name,
+    String? phone,
+    String? city,
+  }) async {
+    final body = <String, dynamic>{};
+    if (name != null) body['name'] = name;
+    if (phone != null) body['phone'] = phone;
+    if (city != null) body['city'] = city;
+
+    final res = await http.put(
+      Uri.parse('$baseUrl/profile'),
+      headers: _headers(token: token),
+      body: jsonEncode(body),
+    );
+    return {'status': res.statusCode, 'body': jsonDecode(res.body)};
+  }
+
+  static Future<Map<String, dynamic>> changePassword({
+    required String token,
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final res = await http.put(
+      Uri.parse('$baseUrl/change-password'),
+      headers: _headers(token: token),
+      body: jsonEncode({
+        'current_password': currentPassword,
+        'password': newPassword,
+        'password_confirmation': newPassword,
+      }),
+    );
+    return {'status': res.statusCode, 'body': jsonDecode(res.body)};
+  }
 }

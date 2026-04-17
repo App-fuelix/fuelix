@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
-import '../services/firebase_auth_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -24,11 +23,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _loadDashboard() async {
+    setState(() => _isLoading = true);
     final user = await AuthService.getUser();
     setState(() => _userName = user['name'] ?? '');
 
     final token = await AuthService.getToken();
-    if (token == null) return;
+    if (token == null) {
+      setState(() => _isLoading = false);
+      return;
+    }
 
     try {
       final result = await ApiService.getDashboard(token);
@@ -37,22 +40,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
         setState(() {
           _stats = body;
           _weeklyConsumption = Map<String, dynamic>.from(body['weekly_consumption'] ?? {});
-          _isLoading = false;
         });
       }
     } catch (_) {
-      setState(() => _isLoading = false);
+      // keep existing stats if any
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
-  }
-
-  Future<void> _logout() async {
-    final token = await AuthService.getToken();
-    if (token != null) {
-      try { await ApiService.logout(token); } catch (_) {}
-    }
-    await FirebaseAuthService.logout();
-    await AuthService.clearSession();
-    if (mounted) Navigator.pushReplacementNamed(context, '/login');
   }
 
   List<FlSpot> _buildChartSpots() {
@@ -99,12 +93,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      _userName.isNotEmpty ? "Hello, $_userName 👋" : "Home",
-                      style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: isDark ? Colors.white : navyColor),
-                    ),
-                    const SizedBox(height: 20),
-
+                  
                     _buildInsightCard(
                       _stats['ai_insight']?['text'] ?? 'Loading insights...',
                       cardBg, primaryColor,
@@ -150,14 +139,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
 
                     const SizedBox(height: 20),
-                    SizedBox(
-                      width: double.infinity,
-                      child: TextButton.icon(
-                        onPressed: _logout,
-                        icon: const Icon(Icons.logout, color: Colors.redAccent),
-                        label: const Text("Logout", style: TextStyle(color: Colors.redAccent)),
-                      ),
-                    ),
                   ],
                 ),
               ),

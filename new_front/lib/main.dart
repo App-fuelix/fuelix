@@ -5,13 +5,17 @@ import 'screens/login_screen.dart';
 import 'screens/signup_screen.dart';
 import 'screens/forgot_password_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/profile_screen.dart';
+import 'screens/edit_profile_screen.dart';
+import 'screens/security_screen.dart';
 import 'screens/card_screen.dart';
 import 'screens/history_screen.dart';
-import 'screens/profile_screen.dart';
 import 'screens/ai_insights_screen.dart';
 import 'screens/stations_screen.dart';
 import 'screens/notifications_screen.dart';
 import 'services/firebase_auth_service.dart';
+
+final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.system);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,48 +28,47 @@ class FuelixApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'FueliX',
-      debugShowCheckedModeBanner: false,
-      themeMode: ThemeMode.system,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.light,
-        scaffoldBackgroundColor: const Color(0xFFF4F6F8),
-        primaryColor: const Color(0xFFF2A945),
-        colorScheme: const ColorScheme.light(
-          primary: Color(0xFFF2A945),
-          surface: Colors.white,
-        ),
-        textTheme: const TextTheme(
-          bodyLarge: TextStyle(color: Colors.black),
-        ),
-      ),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF0F2A44),
-        primaryColor: const Color(0xFFF2A945),
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFFF2A945),
-          surface: Color(0xFF1B3A57),
-        ),
-        textTheme: const TextTheme(
-          bodyLarge: TextStyle(color: Colors.white),
-        ),
-      ),
-      home: const AppEntry(),
-      routes: {
-        '/login': (context) => const LoginScreen(),
-        '/signup': (context) => const SignUpScreen(),
-        '/forgot-password': (context) => const ForgotPasswordScreen(),
-        '/home': (context) => const DashboardScreen(),
-        '/card': (context) => const CardScreen(),
-        '/history': (context) => const HistoryScreen(),
-        '/profile': (context) => const ProfileScreen(),
-        '/ai-insights': (context) => const AiInsightsScreen(),
-        '/stations': (context) => const StationsScreen(),
-        '/notifications': (context) => const NotificationsScreen(),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeNotifier,
+      builder: (_, ThemeMode currentMode, __) {
+        return MaterialApp(
+          title: 'FueliX',
+          debugShowCheckedModeBanner: false,
+          themeMode: currentMode,
+          theme: ThemeData(
+            useMaterial3: true,
+            brightness: Brightness.light,
+            scaffoldBackgroundColor: const Color(0xFFF4F6F8),
+            colorScheme: const ColorScheme.light(
+              primary: Color(0xFFF2A945),
+              surface: Colors.white,
+            ),
+          ),
+          darkTheme: ThemeData(
+            useMaterial3: true,
+            brightness: Brightness.dark,
+            scaffoldBackgroundColor: const Color(0xFF0F2A44),
+            colorScheme: const ColorScheme.dark(
+              primary: Color(0xFFF2A945),
+              surface: Color(0xFF1B3B5A),
+            ),
+          ),
+          home: const AppEntry(),
+          routes: {
+            '/login': (context) => const LoginScreen(),
+            '/signup': (context) => const SignUpScreen(),
+            '/forgot-password': (context) => const ForgotPasswordScreen(),
+            '/home': (context) => const DashboardScreen(),
+            '/profile': (context) => const ProfileScreen(),
+            '/edit-profile': (context) => const EditProfileScreen(),
+            '/security': (context) => const SecurityScreen(),
+            '/card': (context) => const CardScreen(),
+            '/history': (context) => const HistoryScreen(),
+            '/ai-insights': (context) => const AiInsightsScreen(),
+            '/stations': (context) => const StationsScreen(),
+            '/notifications': (context) => const NotificationsScreen(),
+          },
+        );
       },
     );
   }

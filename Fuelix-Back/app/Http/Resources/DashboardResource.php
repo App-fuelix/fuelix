@@ -2,94 +2,144 @@
 
 namespace App\Http\Resources;
 
+use App\Services\FirestoreService;
+use App\Services\FirestoreUserService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
-use Illuminate\Support\Facades\DB;
 
 class DashboardResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
-        $user = $this->resource; // On passe l'User ici
+        $user = $this->resource;
 
-        // 1. Total Consumption (litres cumulés)
-        $totalConsumption = $user->transactions()->sum('quantity_liters') ?? 0;
+        /** @var FirestoreService $firestore */
+        $firestore = app(FirestoreService::class);
 
-        // 2. Total Cost
-        $totalCost = $user->transactions()
-            ->sum(DB::raw('quantity_liters * price_per_liter')) ?? 0;
+        /** @var FirestoreUserService $firestoreUsers */
+        $firestoreUsers = app(FirestoreUserService::class);
 
-        // 3. Average per Vehicle
-        $vehicleCount = $user->vehicles()->count();
-        $avgPerVehicle = $vehicleCount > 0 ? round($totalConsumption / $vehicleCount, 1) : 0;
+        $firestoreUser = $firestoreUsers->findByEmail($user->email);
+        $uid = $firestoreUser['id'] ?? null;
 
-        // 4. Monthly Trend % (vs mois précédent)
-        $currentMonthLiters = $user->transactions()
-            ->whereMonth('date', now()->month)
-            ->whereYear('date', now()->year)
-            ->sum('quantity_liters');
-
-        $previousMonthLiters = $user->transactions()
-            ->whereMonth('date', now()->subMonth()->month)
-            ->whereYear('date', now()->subMonth()->year)
-            ->sum('quantity_liters');
-
-        $monthlyTrendPercent = $previousMonthLiters > 0
-            ? round((($currentMonthLiters - $previousMonthLiters) / $previousMonthLiters) * 100, 1)
-            : 0;
-
-        $monthlyTrendSign = $monthlyTrendPercent >= 0 ? '+' : '';
-
-        // 5. Weekly Consumption (derniers 7 jours) pour le graphique
-        $weeklyData = $user->transactions()
-            ->where('date', '>=', now()->subDays(6))
-            ->selectRaw("DATE(date) as day, SUM(quantity_liters) as liters")
-            ->groupBy('day')
-            ->orderBy('day')
-            ->pluck('liters', 'day')
-            ->toArray();
-
-        // Remplir les 7 jours même si pas de données (0)
-        $weeklyConsumption = [];
-        for ($i = 6; $i >= 0; $i--) {
-            $date = now()->subDays($i)->format('Y-m-d');
-            $dayName = now()->subDays($i)->format('D'); // Mon, Tue...
-            $weeklyConsumption[$dayName] = $weeklyData[$date] ?? 0;
+        if (!$uid) {
+            return $this->emptyDashboard();
         }
 
-        // 6. AI Insight simple (exemple basique – à enrichir plus tard)
-        $insightText = $monthlyTrendPercent > 0
-            ? "Your fuel consumption increased by {$monthlyTrendPercent}% this month"
-            : "Good job! Your fuel consumption decreased by " . abs($monthlyTrendPercent) . "% this month";
+        // Load all transactions from Firestore subcollection
+        $transactions = $firestore->subList('users', $uid, 'transactions');
 
-        // Variation weekly pour insight (optionnel)
-        $weeklyChange = $this->getWeeklyChange($user);
+        // Load vehicles count
+        $vehicles = $firestore->subList('users', $uid, 'vehicles');
+        $vehicleCount = count($vehicles);
+
+        // 1. Total consumption
+        $totalLiters = array_sum(array_map(fn($t) => (float)($t['quantity_liters'] ?? 0), $transactions));
+
+        // 2. Total cost
+        $totalCost = array_sum(array_map(fn($t) =>
+            (float)($t['quantity_liters'] ?? 0) * (float)($t['price_per_liter'] ?? 0),
+            $transactions
+        ));
+
+        // 3. Average per vehicle
+        $avgPerVehicle = $vehicleCount > 0 ? round($totalLiters / $vehicleCount, 1) : 0;
+
+        // 4. Monthly trend
+        $currentMonth = now()->month;
+        $currentYear  = now()->year;
+        $prevMonth    = now()->subMonth()->month;
+        $prevYear     = now()->subMonth()->year;
+
+        $currentMonthLiters = array_sum(array_map(fn($t) => (float)($t['quantity_liters'] ?? 0),
+            array_filter($transactions, fn($t) => $this->inMonth($t['date'] ?? '', $currentMonth, $currentYear))
+        ));
+
+        $prevMonthLiters = array_sum(array_map(fn($t) => (float)($t['quantity_liters'] ?? 0),
+            array_filter($transactions, fn($t) => $this->inMonth($t['date'] ?? '', $prevMonth, $prevYear))
+        ));
+
+        $trendPercent = $prevMonthLiters > 0
+            ? round((($currentMonthLiters - $prevMonthLiters) / $prevMonthLiters) * 100, 1)
+            : 0;
+
+        $trendSign = $trendPercent >= 0 ? '+' : '';
+
+        // 5. Weekly consumption (last 7 days)
+        $weeklyConsumption = [];
+        for ($i = 6; $i >= 0; $i--) {
+            $date    = now()->subDays($i)->format('Y-m-d');
+            $dayName = now()->subDays($i)->format('D');
+            $dayLiters = array_sum(array_map(fn($t) => (float)($t['quantity_liters'] ?? 0),
+                array_filter($transactions, fn($t) => str_starts_with($t['date'] ?? '', $date))
+            ));
+            $weeklyConsumption[$dayName] = $dayLiters;
+        }
+
+        // 6. Weekly change for AI insight
+        $thisWeekLiters = array_sum(array_map(fn($t) => (float)($t['quantity_liters'] ?? 0),
+            array_filter($transactions, fn($t) => Carbon::parse($t['date'] ?? now())->gte(now()->startOfWeek()))
+        ));
+
+        $lastWeekStart = now()->subWeek()->startOfWeek();
+        $lastWeekEnd   = now()->subWeek()->endOfWeek();
+        $lastWeekLiters = array_sum(array_map(fn($t) => (float)($t['quantity_liters'] ?? 0),
+            array_filter($transactions, function ($t) use ($lastWeekStart, $lastWeekEnd) {
+                $d = Carbon::parse($t['date'] ?? now());
+                return $d->gte($lastWeekStart) && $d->lte($lastWeekEnd);
+            })
+        ));
+
+        $weeklyChange = $lastWeekLiters > 0
+            ? round((($thisWeekLiters - $lastWeekLiters) / $lastWeekLiters) * 100, 1)
+            : 0;
+
+        $insightText = $trendPercent > 0
+            ? "Your fuel consumption increased by {$trendPercent}% this month"
+            : "Good job! Your fuel consumption decreased by " . abs($trendPercent) . "% this month";
 
         return [
             'ai_insight' => [
-                'text' => $insightText,
-                'variation' => $weeklyChange > 0 ? "+{$weeklyChange}%" : "{$weeklyChange}%",
-                'period' => 'this week', // ou 'this month' selon besoin
+                'text'      => $insightText,
+                'variation' => $weeklyChange >= 0 ? "+{$weeklyChange}%" : "{$weeklyChange}%",
+                'period'    => 'this week',
             ],
-            'total_consumption' => round($totalConsumption, 0) . 'L',
-            'total_cost' => number_format($totalCost, 0, ',', ' ') . ' TND',
+            'total_consumption'  => round($totalLiters, 0) . 'L',
+            'total_cost'         => number_format($totalCost, 0, ',', ' ') . ' TND',
             'average_per_vehicle' => round($avgPerVehicle, 0) . 'L',
-            'monthly_trend' => $monthlyTrendSign . $monthlyTrendPercent . '%',
-            'weekly_consumption' => $weeklyConsumption, // { "Mon": 120, "Tue": 85, ... }
-            'last_updated' => now()->toDateTimeString(),
+            'monthly_trend'      => $trendSign . $trendPercent . '%',
+            'weekly_consumption' => $weeklyConsumption,
+            'last_updated'       => now()->toDateTimeString(),
         ];
     }
 
-    private function getWeeklyChange($user): float
+    private function inMonth(string $dateStr, int $month, int $year): bool
     {
-        $thisWeek = $user->transactions()
-            ->where('date', '>=', now()->startOfWeek())
-            ->sum('quantity_liters');
+        if ($dateStr === '') return false;
+        try {
+            $d = Carbon::parse($dateStr);
+            return $d->month === $month && $d->year === $year;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
 
-        $lastWeek = $user->transactions()
-            ->whereBetween('date', [now()->subWeek()->startOfWeek(), now()->subWeek()->endOfWeek()])
-            ->sum('quantity_liters');
+    private function emptyDashboard(): array
+    {
+        $weekly = [];
+        for ($i = 6; $i >= 0; $i--) {
+            $weekly[now()->subDays($i)->format('D')] = 0;
+        }
 
-        return $lastWeek > 0 ? round((($thisWeek - $lastWeek) / $lastWeek) * 100, 1) : 0;
+        return [
+            'ai_insight'          => ['text' => 'No data yet. Start tracking your fuel!', 'variation' => '0%', 'period' => 'this week'],
+            'total_consumption'   => '0L',
+            'total_cost'          => '0 TND',
+            'average_per_vehicle' => '0L',
+            'monthly_trend'       => '0%',
+            'weekly_consumption'  => $weekly,
+            'last_updated'        => now()->toDateTimeString(),
+        ];
     }
 }
