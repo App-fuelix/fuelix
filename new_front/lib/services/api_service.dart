@@ -149,4 +149,49 @@ class ApiService {
     );
     return {'status': res.statusCode, 'body': jsonDecode(res.body)};
   }
+
+  static Future<Map<String, dynamic>> getCard(String token) async {
+    final res = await http.get(
+      Uri.parse('$baseUrl/fuel-cards/show'),
+      headers: _headers(token: token),
+    );
+    return {'status': res.statusCode, 'body': jsonDecode(res.body)};
+  }
+
+  static Future<Map<String, dynamic>> rechargeCard(String token, double amount) async {
+    final res = await http.post(
+      Uri.parse('$baseUrl/fuel-cards/recharge'),
+      headers: _headers(token: token),
+      body: jsonEncode({'amount': amount}),
+    );
+    return {'status': res.statusCode, 'body': jsonDecode(res.body)};
+  }
+
+  static Future<Map<String, dynamic>> getCardTransactions(String token) async {
+    final res = await http.get(
+      Uri.parse('$baseUrl/fuel-cards/transactions'),
+      headers: _headers(token: token),
+    );
+    return {'status': res.statusCode, 'body': jsonDecode(res.body)};
+  }
+
+  static Future<Map<String, dynamic>> getVehicles(String token) async {
+    final res = await http.get(
+      Uri.parse('$baseUrl/vehicles'),
+      headers: _headers(token: token),
+    );
+    return {'status': res.statusCode, 'body': jsonDecode(res.body)};
+  }
+
+  static Future<Map<String, dynamic>> getHistory(String token, {String? month, String? year, String? station}) async {
+    var url = '$baseUrl/fuel-cards/history';
+    final params = <String, String>{};
+    if (month != null) params['month'] = month;
+    if (year != null) params['year'] = year;
+    if (station != null) params['station'] = station;
+    if (params.isNotEmpty) url += '?' + params.entries.map((e) => '${e.key}=${e.value}').join('&');
+
+    final res = await http.get(Uri.parse(url), headers: _headers(token: token));
+    return {'status': res.statusCode, 'body': jsonDecode(res.body)};
+  }
 }

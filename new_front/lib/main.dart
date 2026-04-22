@@ -13,6 +13,7 @@ import 'screens/history_screen.dart';
 import 'screens/ai_insights_screen.dart';
 import 'screens/stations_screen.dart';
 import 'screens/notifications_screen.dart';
+import 'screens/transaction_detail_screen.dart';
 import 'services/firebase_auth_service.dart';
 
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.system);

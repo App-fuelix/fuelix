@@ -86,16 +86,16 @@ class CardController extends Controller
 
         $card = $cards[0];
         $transactions = $this->firestore->subList('users', $uid, 'transactions');
+        $vehicles = $this->buildVehicleMap($uid);
 
-        // Filter by card and sort by date desc
         $filtered = array_filter($transactions, fn($t) => ($t['fuel_card_id'] ?? '') === $card['id']);
         usort($filtered, fn($a, $b) => strcmp($b['date'] ?? '', $a['date'] ?? ''));
         $filtered = array_slice(array_values($filtered), 0, 20);
 
         return response()->json([
-            'card_id' => $card['id'],
-            'transactions' => array_map(fn($t) => $this->formatTransaction($t), $filtered),
-            'total_count' => count($filtered),
+            'card_id'      => $card['id'],
+            'transactions' => array_map(fn($t) => $this->formatTransaction($t, vehicles: $vehicles), $filtered),
+            'total_count'  => count($filtered),
         ]);
     }
 
@@ -106,8 +106,8 @@ class CardController extends Controller
         if (!$uid) return response()->json(['message' => 'User not found'], 404);
 
         $transactions = $this->firestore->subList('users', $uid, 'transactions');
+        $vehicles = $this->buildVehicleMap($uid);
 
-        // Filter by month
         if ($request->month) {
             $year = $request->year ?? now()->year;
             $transactions = array_filter($transactions, function ($t) use ($request, $year) {
@@ -116,26 +116,23 @@ class CardController extends Controller
             });
         }
 
-        // Filter by station
         if ($request->station) {
             $transactions = array_filter($transactions, fn($t) =>
                 str_contains(strtolower($t['station_name'] ?? ''), strtolower($request->station))
             );
         }
 
-        // Sort by date desc
         usort($transactions, fn($a, $b) => strcmp($b['date'] ?? '', $a['date'] ?? ''));
         $transactions = array_values($transactions);
 
-        $formatted = array_map(fn($t) => $this->formatTransaction($t, full: true), $transactions);
+        $formatted = array_map(fn($t) => $this->formatTransaction($t, full: true, vehicles: $vehicles), $transactions);
 
-        // Group by month label
         $grouped = [];
         foreach ($formatted as $t) {
             $grouped[$t['month_label']][] = $t;
         }
 
-        $totalSpent = array_sum(array_map(fn($t) => (float)($t['amount'] ?? 0), $formatted));
+        $totalSpent  = array_sum(array_map(fn($t) => (float)($t['amount'] ?? 0), $formatted));
         $totalLiters = array_sum(array_map(fn($t) => (float)($t['quantity_liters'] ?? 0), $formatted));
 
         return response()->json([
@@ -177,6 +174,7 @@ class CardController extends Controller
     {
         $request->validate([
             'fuel_card_id'    => 'required|string',
+            'vehicle_id'      => 'nullable|string',
             'amount'          => 'required|numeric',
             'quantity_liters' => 'required|numeric',
             'price_per_liter' => 'required|numeric',
@@ -194,14 +192,20 @@ class CardController extends Controller
             $this->firestore->subUpdate('users', $uid, 'fuel_cards', $card['id'], ['balance' => $newBalance]);
         }
 
-        $transaction = $this->firestore->subCreate('users', $uid, 'transactions', [
+        $data = [
             'fuel_card_id'    => $request->fuel_card_id,
             'amount'          => (float) $request->amount,
             'quantity_liters' => (float) $request->quantity_liters,
             'price_per_liter' => (float) $request->price_per_liter,
             'station_name'    => $request->input('station_name', ''),
             'date'            => $request->input('date', now()->toIso8601String()),
-        ]);
+        ];
+
+        if ($request->filled('vehicle_id')) {
+            $data['vehicle_id'] = $request->vehicle_id;
+        }
+
+        $transaction = $this->firestore->subCreate('users', $uid, 'transactions', $data);
 
         return response()->json(['message' => 'Transaction recorded', 'transaction' => $transaction], 201);
     }
@@ -271,17 +275,43 @@ class CardController extends Controller
         return $base;
     }
 
-    private function formatTransaction(array $t, bool $full = false): array
+    private function formatTransaction(array $t, bool $full = false, array $vehicles = []): array
     {
         $date = Carbon::parse($t['date'] ?? now());
+
+        // Resolve vehicle from preloaded map
+        $vehicleId = $t['vehicle_id'] ?? null;
+        $vehicle = null;
+        if ($vehicleId && isset($vehicles[$vehicleId])) {
+            $v = $vehicles[$vehicleId];
+            $vehicle = [
+                'id'           => $v['id'],
+                'model'        => $v['model'] ?? '—',
+                'plate_number' => $v['plate_number'] ?? '—',
+                'fuel_type'    => $v['fuel_type'] ?? '—',
+            ];
+        }
+
+        // Parse authorized_products — stored as JSON string in Firestore
+        $rawProducts = $t['authorized_products'] ?? null;
+        $products = [];
+        if (is_string($rawProducts) && $rawProducts !== '') {
+            $decoded = json_decode($rawProducts, true);
+            $products = is_array($decoded) ? $decoded : [];
+        } elseif (is_array($rawProducts)) {
+            $products = $rawProducts;
+        }
+
         $base = [
-            'id'              => $t['id'],
-            'date'            => $date->format('Y-m-d'),
-            'time'            => $date->format('H:i'),
-            'amount'          => number_format((float)($t['amount'] ?? 0), 2),
-            'quantity_liters' => number_format((float)($t['quantity_liters'] ?? 0), 1),
-            'price_per_liter' => number_format((float)($t['price_per_liter'] ?? 0), 3),
-            'station_name'    => $t['station_name'] ?? '',
+            'id'                  => $t['id'],
+            'date'                => $date->format('Y-m-d'),
+            'time'                => $date->format('H:i'),
+            'amount'              => number_format((float)($t['amount'] ?? 0), 2),
+            'quantity_liters'     => number_format((float)($t['quantity_liters'] ?? 0), 1),
+            'price_per_liter'     => number_format((float)($t['price_per_liter'] ?? 0), 3),
+            'station_name'        => $t['station_name'] ?? '',
+            'authorized_products' => $products,
+            'vehicle'             => $vehicle,
         ];
 
         if ($full) {
@@ -289,6 +319,19 @@ class CardController extends Controller
         }
 
         return $base;
+    }
+
+    /**
+     * Load all vehicles for a user and index them by ID for O(1) lookup.
+     */
+    private function buildVehicleMap(string $uid): array
+    {
+        $vehicles = $this->firestore->subList('users', $uid, 'vehicles');
+        $map = [];
+        foreach ($vehicles as $v) {
+            $map[$v['id']] = $v;
+        }
+        return $map;
     }
 
     private function isExpired(array $card): bool
