@@ -189,8 +189,32 @@ class ApiService {
     if (month != null) params['month'] = month;
     if (year != null) params['year'] = year;
     if (station != null) params['station'] = station;
-    if (params.isNotEmpty) url += '?' + params.entries.map((e) => '${e.key}=${e.value}').join('&');
+    if (params.isNotEmpty) url += '?${params.entries.map((e) => '${e.key}=${e.value}').join('&')}';
 
+    final res = await http.get(Uri.parse(url), headers: _headers(token: token));
+    return {'status': res.statusCode, 'body': jsonDecode(res.body)};
+  }
+
+  static Future<Map<String, dynamic>> getStations(
+    String token, {
+    String? service,
+    String? governorate,
+    double? latitude,
+    double? longitude,
+    double? radiusKm,
+  }) async {
+    var url = '$baseUrl/stations';
+    final params = <String, String>{};
+    if (service != null && service != 'All') params['service'] = service.toLowerCase();
+    if (governorate != null && governorate.isNotEmpty) params['governorate'] = governorate.toLowerCase();
+    if (latitude != null) params['lat'] = latitude.toStringAsFixed(6);
+    if (longitude != null) params['lng'] = longitude.toStringAsFixed(6);
+    if (radiusKm != null) params['radius_km'] = radiusKm.toStringAsFixed(1);
+
+    if (params.isNotEmpty) {
+      url += '?${params.entries.map((e) => '${e.key}=${e.value}').join('&')}';
+    }
+    
     final res = await http.get(Uri.parse(url), headers: _headers(token: token));
     return {'status': res.statusCode, 'body': jsonDecode(res.body)};
   }

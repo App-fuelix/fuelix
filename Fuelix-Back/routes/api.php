@@ -107,9 +107,11 @@ Route::get('/firestore/health', function (FirestoreUserService $firestore) {
 });
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\CardController;
+use App\Http\Controllers\Api\StationController;
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'home']);
+    Route::get('/stations', [StationController::class, 'index']);
 
     // Fuel Card routes
     Route::prefix('fuel-cards')->group(function () {
