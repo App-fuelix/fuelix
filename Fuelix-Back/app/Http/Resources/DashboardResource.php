@@ -4,6 +4,7 @@ namespace App\Http\Resources;
 
 use App\Services\FirestoreService;
 use App\Services\FirestoreUserService;
+use App\Services\AiInsightService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -34,14 +35,11 @@ class DashboardResource extends JsonResource
         $vehicles = $firestore->subList('users', $uid, 'vehicles');
         $vehicleCount = count($vehicles);
 
-        // 1. Total consumption
-        $totalLiters = array_sum(array_map(fn($t) => (float)($t['quantity_liters'] ?? 0), $transactions));
+        // 1. Total consumption from Firestore transactions.quantity_liters
+        $totalLiters = array_sum(array_map(fn($t) => $this->transactionLiters($t), $transactions));
 
-        // 2. Total cost
-        $totalCost = array_sum(array_map(fn($t) =>
-            (float)($t['quantity_liters'] ?? 0) * (float)($t['price_per_liter'] ?? 0),
-            $transactions
-        ));
+        // 2. Total cost from Firestore transactions.amount
+        $totalCost = array_sum(array_map(fn($t) => $this->transactionAmount($t), $transactions));
 
         // 3. Average per vehicle
         $avgPerVehicle = $vehicleCount > 0 ? round($totalLiters / $vehicleCount, 1) : 0;
@@ -52,11 +50,11 @@ class DashboardResource extends JsonResource
         $prevMonth    = now()->subMonth()->month;
         $prevYear     = now()->subMonth()->year;
 
-        $currentMonthLiters = array_sum(array_map(fn($t) => (float)($t['quantity_liters'] ?? 0),
+        $currentMonthLiters = array_sum(array_map(fn($t) => $this->transactionLiters($t),
             array_filter($transactions, fn($t) => $this->inMonth($t['date'] ?? '', $currentMonth, $currentYear))
         ));
 
-        $prevMonthLiters = array_sum(array_map(fn($t) => (float)($t['quantity_liters'] ?? 0),
+        $prevMonthLiters = array_sum(array_map(fn($t) => $this->transactionLiters($t),
             array_filter($transactions, fn($t) => $this->inMonth($t['date'] ?? '', $prevMonth, $prevYear))
         ));
 
@@ -69,25 +67,31 @@ class DashboardResource extends JsonResource
         // 5. Weekly consumption (last 7 days)
         $weeklyConsumption = [];
         for ($i = 6; $i >= 0; $i--) {
-            $date    = now()->subDays($i)->format('Y-m-d');
-            $dayName = now()->subDays($i)->format('D');
-            $dayLiters = array_sum(array_map(fn($t) => (float)($t['quantity_liters'] ?? 0),
-                array_filter($transactions, fn($t) => str_starts_with($t['date'] ?? '', $date))
+            $day = now()->subDays($i);
+            $dayName = $day->format('D');
+            $dayLiters = array_sum(array_map(fn($t) => $this->transactionLiters($t),
+                array_filter($transactions, function ($t) use ($day) {
+                    $date = $this->transactionDate($t);
+                    return $date && $date->isSameDay($day);
+                })
             ));
-            $weeklyConsumption[$dayName] = $dayLiters;
+            $weeklyConsumption[$dayName] = round($dayLiters, 1);
         }
 
         // 6. Weekly change for AI insight
-        $thisWeekLiters = array_sum(array_map(fn($t) => (float)($t['quantity_liters'] ?? 0),
-            array_filter($transactions, fn($t) => Carbon::parse($t['date'] ?? now())->gte(now()->startOfWeek()))
+        $thisWeekLiters = array_sum(array_map(fn($t) => $this->transactionLiters($t),
+            array_filter($transactions, function ($t) {
+                $date = $this->transactionDate($t);
+                return $date && $date->gte(now()->startOfWeek());
+            })
         ));
 
         $lastWeekStart = now()->subWeek()->startOfWeek();
         $lastWeekEnd   = now()->subWeek()->endOfWeek();
-        $lastWeekLiters = array_sum(array_map(fn($t) => (float)($t['quantity_liters'] ?? 0),
+        $lastWeekLiters = array_sum(array_map(fn($t) => $this->transactionLiters($t),
             array_filter($transactions, function ($t) use ($lastWeekStart, $lastWeekEnd) {
-                $d = Carbon::parse($t['date'] ?? now());
-                return $d->gte($lastWeekStart) && $d->lte($lastWeekEnd);
+                $date = $this->transactionDate($t);
+                return $date && $date->gte($lastWeekStart) && $date->lte($lastWeekEnd);
             })
         ));
 
@@ -95,16 +99,22 @@ class DashboardResource extends JsonResource
             ? round((($thisWeekLiters - $lastWeekLiters) / $lastWeekLiters) * 100, 1)
             : 0;
 
-        $insightText = $trendPercent > 0
-            ? "Your fuel consumption increased by {$trendPercent}% this month"
-            : "Good job! Your fuel consumption decreased by " . abs($trendPercent) . "% this month";
+        try {
+            $aiInsight = app(AiInsightService::class)->dashboardInsight($transactions, $vehicles);
+        } catch (\Throwable) {
+            $insightText = $trendPercent > 0
+                ? "Your fuel consumption increased by {$trendPercent}% this month"
+                : "Good job! Your fuel consumption decreased by " . abs($trendPercent) . "% this month";
 
-        return [
-            'ai_insight' => [
+            $aiInsight = [
                 'text'      => $insightText,
                 'variation' => $weeklyChange >= 0 ? "+{$weeklyChange}%" : "{$weeklyChange}%",
                 'period'    => 'this week',
-            ],
+            ];
+        }
+
+        return [
+            'ai_insight' => $aiInsight,
             'total_consumption'  => round($totalLiters, 0) . 'L',
             'total_cost'         => number_format($totalCost, 0, ',', ' ') . ' TND',
             'average_per_vehicle' => round($avgPerVehicle, 0) . 'L',
@@ -123,6 +133,50 @@ class DashboardResource extends JsonResource
         } catch (\Throwable) {
             return false;
         }
+    }
+
+    private function transactionLiters(array $transaction): float
+    {
+        return $this->number($transaction['quantity_liters'] ?? 0);
+    }
+
+    private function transactionAmount(array $transaction): float
+    {
+        $amount = $this->number($transaction['amount'] ?? 0);
+        if ($amount > 0) {
+            return $amount;
+        }
+
+        return $this->transactionLiters($transaction) * $this->number($transaction['price_per_liter'] ?? 0);
+    }
+
+    private function transactionDate(array $transaction): ?Carbon
+    {
+        $date = (string) ($transaction['date'] ?? '');
+        if ($date === '') {
+            return null;
+        }
+
+        try {
+            return Carbon::parse($date);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function number(mixed $value): float
+    {
+        if (is_int($value) || is_float($value)) {
+            return (float) $value;
+        }
+
+        if (is_string($value)) {
+            $cleaned = str_replace(['TND', 'L', ' '], '', $value);
+            $cleaned = str_replace(',', '.', $cleaned);
+            return is_numeric($cleaned) ? (float) $cleaned : 0.0;
+        }
+
+        return 0.0;
     }
 
     private function emptyDashboard(): array

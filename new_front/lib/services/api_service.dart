@@ -7,7 +7,6 @@ class ApiService {
   // Physical device:  http://YOUR_LOCAL_IP:8000/api
   // Web / Windows:    http://127.0.0.1:8000/api
   static const String baseUrl = 'http://10.0.2.2:8000/api';
-
   static Map<String, String> _headers({String? token}) {
     final headers = {
       'Content-Type': 'application/json',
@@ -109,6 +108,14 @@ class ApiService {
   static Future<Map<String, dynamic>> getDashboard(String token) async {
     final res = await http.get(
       Uri.parse('$baseUrl/dashboard'),
+      headers: _headers(token: token),
+    );
+    return {'status': res.statusCode, 'body': jsonDecode(res.body)};
+  }
+
+  static Future<Map<String, dynamic>> getAiInsights(String token) async {
+    final res = await http.get(
+      Uri.parse('$baseUrl/ai-insights'),
       headers: _headers(token: token),
     );
     return {'status': res.statusCode, 'body': jsonDecode(res.body)};
@@ -218,4 +225,5 @@ class ApiService {
     final res = await http.get(Uri.parse(url), headers: _headers(token: token));
     return {'status': res.statusCode, 'body': jsonDecode(res.body)};
   }
+
 }

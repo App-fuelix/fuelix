@@ -12,7 +12,6 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  bool _notificationsEnabled = true;
   String _name = '';
   String _email = '';
   String _phone = '';
@@ -139,18 +138,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   // Change le thème globalement
                   themeNotifier.value = val ? ThemeMode.dark : ThemeMode.light;
                 },
-                activeColor: primaryColor,
-              ),
-            ),
-            const SizedBox(height: 15),
-            _buildSettingItem(
-              icon: Icons.notifications_none_outlined,
-              title: "Notifications",
-              isDark: isDark,
-              primaryColor: primaryColor,
-              trailing: Switch(
-                value: _notificationsEnabled,
-                onChanged: (val) => setState(() => _notificationsEnabled = val),
                 activeColor: primaryColor,
               ),
             ),
