@@ -260,6 +260,7 @@ class FirestoreUserService
     {
         $now = CarbonImmutable::now()->toIso8601String();
 
+        $data['role'] ??= 'user';
         $data['created_at'] = $now;
         $data['updated_at'] = $now;
 
@@ -278,6 +279,7 @@ class FirestoreUserService
             'name'       => $name,
             'email'      => strtolower($email),
             'password'   => Hash::make($plainPassword),
+            'role'       => 'user',
             'created_at' => $now,
             'updated_at' => $now,
         ];

@@ -153,41 +153,41 @@ def _detect_anomalies(frame: pd.DataFrame) -> list[dict]:
 
 def _recommendations(frame: pd.DataFrame, monthly: list[dict], prediction: dict, anomalies: list[dict]) -> list[str]:
     if frame.empty:
-        return ["Ajoutez des transactions pour recevoir des recommandations personnalisees."]
+        return ["Add more transactions to unlock personalized recommendations."]
 
     recommendations = []
     if len(monthly) >= 2:
         current = monthly[-1]["total_liters"]
         previous = monthly[-2]["total_liters"]
         if previous > 0 and current > previous * 1.15:
-            recommendations.append("Votre consommation augmente ce mois-ci. Verifiez les trajets repetitifs et la pression des pneus.")
+            recommendations.append("Your consumption is increasing this month. Check repeated trips and tire pressure.")
         elif previous > 0 and current < previous * 0.9:
-            recommendations.append("Bonne tendance: votre consommation est inferieure au mois precedent.")
+            recommendations.append("Good trend: your consumption is lower than the previous month.")
 
     avg_price = frame["price_per_liter"].replace(0, pd.NA).dropna().mean()
     if pd.notna(avg_price):
         expensive = frame[frame["price_per_liter"] > avg_price * 1.05]
         if not expensive.empty:
-            recommendations.append("Certaines transactions ont un prix/litre eleve. Comparez les stations avant le plein.")
+            recommendations.append("Some transactions have a high price per liter. Compare stations before refueling.")
         else:
-            recommendations.append(f"Votre prix moyen est d'environ {avg_price:.3f} TND/L. Gardez ce repere pour comparer vos prochains pleins.")
+            recommendations.append(f"Your average price is about {avg_price:.3f} TND/L. Use it as a benchmark for your next refuels.")
 
     if anomalies:
-        recommendations.append("Une ou plusieurs transactions semblent inhabituelles. Consultez les details pour confirmer.")
+        recommendations.append("One or more transactions look unusual. Review the details to confirm them.")
 
     recent_liters = float(frame.tail(30)["quantity_liters"].sum())
     if recent_liters > 0 and prediction["predicted_monthly_liters"] > recent_liters * 1.1:
-        recommendations.append("Une hausse est possible prochainement. Planifiez vos recharges avant les longs trajets.")
+        recommendations.append("An increase may be coming soon. Plan your card top-ups before long trips.")
 
     if len(monthly) < 2:
-        recommendations.append("Ajoutez des transactions sur plusieurs mois pour obtenir une comparaison mensuelle plus precise.")
+        recommendations.append("Add transactions across several months to get a more accurate monthly comparison.")
 
     total_liters = float(frame["quantity_liters"].sum())
     total_cost = float(frame["amount"].sum())
     if total_liters > 0 and total_cost > 0:
-        recommendations.append(f"Vous avez consomme {total_liters:.1f} L pour environ {total_cost:.1f} TND dans l'historique analyse.")
+        recommendations.append(f"You consumed {total_liters:.1f} L for about {total_cost:.1f} TND in the analyzed history.")
 
-    return recommendations[:4] or ["Votre profil de consommation est stable pour le moment."]
+    return recommendations[:4] or ["Your consumption profile is stable for now."]
 
 
 def _trend_text(monthly: list[dict]) -> dict:

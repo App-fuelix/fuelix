@@ -11,6 +11,7 @@ class AiInsightsScreen extends StatefulWidget {
 }
 
 class _AiInsightsScreenState extends State<AiInsightsScreen> {
+  final _questionController = TextEditingController();
   bool _isLoading = true;
   Map<String, dynamic>? _insights;
   Map<String, dynamic>? _card;
@@ -19,6 +20,12 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
   void initState() {
     super.initState();
     _loadInsights();
+  }
+
+  @override
+  void dispose() {
+    _questionController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadInsights() async {
@@ -79,11 +86,48 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
     return value.toStringAsFixed(1);
   }
 
-  void _openChat() {
+  double _asDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString().replaceAll(',', '.') ?? '') ?? 0;
+  }
+
+  String get _spendingTrend {
+    final months = _listOf('monthly_comparison');
+    if (months.length < 2) return 'Not enough data';
+
+    final current = months.last is Map ? Map<String, dynamic>.from(months.last as Map) : <String, dynamic>{};
+    final previousRaw = months[months.length - 2];
+    final previous = previousRaw is Map ? Map<String, dynamic>.from(previousRaw) : <String, dynamic>{};
+    final currentLiters = _asDouble(current['total_liters']);
+    final previousLiters = _asDouble(previous['total_liters']);
+
+    if (previousLiters <= 0) return 'Stable';
+    final change = ((currentLiters - previousLiters) / previousLiters) * 100;
+    if (change.abs() < 1) return 'Stable';
+    return change > 0 ? '+${_formatNumber(change)}%' : '-${_formatNumber(change.abs())}%';
+  }
+
+  String get _balanceStatus {
+    final balance = _currentBalance;
+    final estimatedCost = _asDouble(_prediction['estimated_monthly_cost_tnd']);
+    if (balance == null) return 'No card';
+    if (estimatedCost <= 0) return '${_formatNumber(balance)} TND';
+    if (balance >= estimatedCost) return 'Covered';
+    return 'Needs ${_formatNumber(estimatedCost - balance)} TND';
+  }
+
+  void _openChat([String? question]) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const AiInsightsChatScreen()),
+      MaterialPageRoute(builder: (_) => AiInsightsChatScreen(initialQuestion: question)),
     );
+  }
+
+  void _sendQuestion() {
+    final question = _questionController.text.trim();
+    if (question.isEmpty) return;
+    _questionController.clear();
+    _openChat(question);
   }
 
   void _showMessage(String message) {
@@ -113,7 +157,7 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
         title: Text('AI Insights', style: TextStyle(color: text, fontWeight: FontWeight.bold)),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _openChat,
+        onPressed: () => _openChat(),
         backgroundColor: primary,
         foregroundColor: Colors.white,
         child: const Icon(Icons.chat_bubble_outline),
@@ -128,17 +172,11 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _predictionCard(panel, primary, text, isDark),
+                    _insightMetrics(primary, panel, text, isDark),
                     const SizedBox(height: 16),
-                    _chatLauncherCard(panel, primary, text, isDark),
+                    _recommendationsCard(panel, text, isDark),
                     const SizedBox(height: 16),
-                    _recommendationsCard(panel, text),
-                    const SizedBox(height: 16),
-                    _monthlyCard(panel, text, primary),
-                    if (_listOf('anomalies').isNotEmpty) ...[
-                      const SizedBox(height: 16),
-                      _anomaliesCard(panel, text),
-                    ],
+                    _chatSection(panel, primary, text, navy, isDark),
                   ],
                 ),
               ),
@@ -146,58 +184,78 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
     );
   }
 
+  // ignore: unused_element
   Widget _predictionCard(Color panel, Color primary, Color text, bool isDark) {
     final prediction = _prediction;
-    final transactionCount = _insights?['transaction_count'] ?? 0;
-    final balance = _currentBalance;
+    final estimatedBudget = _asDouble(prediction['estimated_monthly_cost_tnd']);
+    final predictedLiters = _asDouble(prediction['predicted_monthly_liters']);
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: panel,
+        color: isDark ? const Color(0xFF183854) : Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border(top: BorderSide(color: primary, width: 4)),
+        border: Border.all(color: primary.withOpacity(0.25)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.psychology, color: primary),
-              const SizedBox(width: 10),
-              Text('Prevision personnalisee', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: text)),
+              Container(
+                height: 44,
+                width: 44,
+                decoration: BoxDecoration(color: primary.withOpacity(0.16), shape: BoxShape.circle),
+                child: Icon(Icons.auto_graph, color: primary),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Next month fuel budget', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: text)),
+                    const SizedBox(height: 3),
+                    Text('Estimated from recent activity', style: TextStyle(color: isDark ? Colors.white70 : Colors.grey[700], fontSize: 12)),
+                  ],
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 18),
           Text(
-            '${prediction['predicted_monthly_liters'] ?? 0} L',
+            '${_formatNumber(estimatedBudget)} TND',
             style: TextStyle(fontSize: 34, fontWeight: FontWeight.bold, color: primary),
           ),
           const SizedBox(height: 4),
-          Text('Consommation mensuelle prevue', style: TextStyle(color: isDark ? Colors.white70 : Colors.grey[700])),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(child: _metricTile('Cout estime', '${prediction['estimated_monthly_cost_tnd'] ?? 0} TND', isDark)),
-              const SizedBox(width: 12),
-              Expanded(child: _metricTile('Transactions', '$transactionCount', isDark)),
-            ],
-          ),
-          if (balance != null) ...[
-            const SizedBox(height: 12),
-            _metricTile('Solde carte', '${_formatNumber(balance)} TND', isDark),
-          ],
-          const SizedBox(height: 12),
-          const Text('Analyse calculee a partir de votre historique recent.', style: TextStyle(color: Colors.grey, fontSize: 12)),
+          Text('Predicted consumption: ${_formatNumber(predictedLiters)} L', style: TextStyle(color: isDark ? Colors.white70 : Colors.grey[700])),
         ],
       ),
     );
   }
 
+  Widget _insightMetrics(Color primary, Color panel, Color text, bool isDark) {
+    final prediction = _prediction;
+    return GridView.count(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      crossAxisCount: 2,
+      childAspectRatio: 1.35,
+      crossAxisSpacing: 12,
+      mainAxisSpacing: 12,
+      children: [
+        _miniInsightCard('Budget', '${_formatNumber(_asDouble(prediction['estimated_monthly_cost_tnd']))} TND', Icons.payments_outlined, panel, primary, text, isDark),
+        _miniInsightCard('Consumption', '${_formatNumber(_asDouble(prediction['predicted_monthly_liters']))} L', Icons.local_gas_station_outlined, panel, primary, text, isDark),
+        _miniInsightCard('Trend', _spendingTrend, Icons.trending_up, panel, primary, text, isDark),
+        _miniInsightCard('Balance', _balanceStatus, Icons.account_balance_wallet_outlined, panel, primary, text, isDark),
+      ],
+    );
+  }
+
+  // ignore: unused_element
   Widget _chatLauncherCard(Color panel, Color primary, Color text, bool isDark) {
     return InkWell(
       borderRadius: BorderRadius.circular(16),
-      onTap: _openChat,
+      onTap: () => _openChat(),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(18),
@@ -231,19 +289,127 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
     );
   }
 
-  Widget _recommendationsCard(Color panel, Color text) {
+  Widget _miniInsightCard(String label, String value, IconData icon, Color panel, Color primary, Color text, bool isDark) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(14)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: primary, size: 22),
+          const Spacer(),
+          Text(value, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.bold, color: text, fontSize: 14)),
+          const SizedBox(height: 4),
+          Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: isDark ? Colors.white60 : Colors.grey[600], fontSize: 11)),
+        ],
+      ),
+    );
+  }
+
+  Widget _chatSection(Color panel, Color primary, Color text, Color navy, bool isDark) {
+    final quickQuestions = <String, String>{
+      'Expenses increasing?': 'Why are my fuel expenses increasing?',
+      'Reduce consumption': 'How can I reduce my fuel consumption?',
+      'Normal usage?': 'Is my consumption normal compared to my history?',
+      'This week plan': 'What should I do this week to control my budget?',
+      'Recharge card?': 'Should I recharge my FueliX card?',
+    };
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(16)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.smart_toy_outlined, color: primary),
+              const SizedBox(width: 10),
+              Text('Ask FueliX AI', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: text)),
+            ],
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _questionController,
+            minLines: 1,
+            maxLines: 3,
+            style: TextStyle(color: text),
+            decoration: InputDecoration(
+              hintText: 'Ask why it changed or what to do next...',
+              hintStyle: TextStyle(color: isDark ? Colors.white54 : Colors.grey[500], fontSize: 13),
+              filled: true,
+              fillColor: isDark ? navy : const Color(0xFFF4F6F8),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              suffixIcon: IconButton(
+                onPressed: _sendQuestion,
+                icon: Icon(Icons.send, color: primary),
+              ),
+            ),
+            onSubmitted: (_) => _sendQuestion(),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: quickQuestions.entries.map((entry) {
+              return ActionChip(
+                label: Text(entry.key, style: TextStyle(color: text, fontSize: 12)),
+                avatar: Icon(Icons.bolt, color: primary, size: 16),
+                backgroundColor: isDark ? const Color(0xFF0F2A44) : const Color(0xFFFFF6E8),
+                side: BorderSide(color: primary.withOpacity(0.24)),
+                onPressed: () => _openChat(entry.value),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _recommendationsCard(Color panel, Color text, bool isDark) {
     final recommendations = _listOf('recommendations');
     return _section(
       panel: panel,
       text: text,
-      title: 'Recommandations',
-      icon: Icons.tips_and_updates,
+      title: 'Smart recommendation',
+      icon: Icons.lightbulb_outline,
       children: recommendations.isEmpty
-          ? [const Text('Aucune recommandation disponible.', style: TextStyle(color: Colors.grey))]
-          : recommendations.map((item) => _bullet(item.toString(), text)).toList(),
+          ? [Text('Add more transactions to unlock personalized advice.', style: TextStyle(color: isDark ? Colors.white70 : Colors.grey[700]))]
+          : recommendations.map((item) => _bullet(_englishRecommendation(item.toString()), text)).toList(),
     );
   }
 
+  String _englishRecommendation(String value) {
+    final normalized = value.toLowerCase();
+    if (normalized.contains('ajoutez des transactions')) {
+      return 'Add more transactions to unlock personalized recommendations.';
+    }
+    if (normalized.contains('recommandations seront plus')) {
+      return 'Your recommendations will become more accurate after a full analysis of your history.';
+    }
+    if (normalized.contains('consommation augmente')) {
+      return 'Your consumption is increasing this month. Check repeated trips and tire pressure.';
+    }
+    if (normalized.contains('bonne tendance')) {
+      return 'Good trend: your consumption is lower than the previous month.';
+    }
+    if (normalized.contains('prix/litre') || normalized.contains('prix moyen')) {
+      return 'Monitor your price per liter and compare stations before refueling.';
+    }
+    if (normalized.contains('transactions semblent inhabituelles')) {
+      return 'One or more transactions look unusual. Review the details to confirm them.';
+    }
+    if (normalized.contains('hausse est possible')) {
+      return 'An increase may be coming soon. Plan your card top-ups before long trips.';
+    }
+    if (normalized.contains('profil de consommation est stable')) {
+      return 'Your consumption profile is stable for now.';
+    }
+    return value;
+  }
+
+  // ignore: unused_element
   Widget _monthlyCard(Color panel, Color text, Color primary) {
     final months = _listOf('monthly_comparison');
     return _section(
@@ -268,6 +434,7 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
     );
   }
 
+  // ignore: unused_element
   Widget _anomaliesCard(Color panel, Color text) {
     final anomalies = _listOf('anomalies');
     return _section(
@@ -327,6 +494,7 @@ class _AiInsightsScreenState extends State<AiInsightsScreen> {
     );
   }
 
+  // ignore: unused_element
   Widget _metricTile(String label, String value, bool isDark) {
     return Container(
       padding: const EdgeInsets.all(12),
