@@ -107,19 +107,28 @@ Route::get('/firestore/health', function (FirestoreUserService $firestore) {
 });
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\CardController;
+use App\Http\Controllers\Api\CardPlanController;
 use App\Http\Controllers\Api\StationController;
 use App\Http\Controllers\Api\AiInsightController;
+use App\Http\Controllers\Api\StripeController;
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'home']);
     Route::get('/stations', [StationController::class, 'index']);
     Route::get('/ai-insights', [AiInsightController::class, 'show']);
 
+    // Stripe payment routes
+    Route::prefix('stripe')->group(function () {
+        Route::post('/create-payment-intent', [StripeController::class, 'createPaymentIntent']);
+        Route::post('/confirm-recharge', [StripeController::class, 'confirmRecharge']);
+    });
+
     // Fuel Card routes
     Route::prefix('fuel-cards')->group(function () {
         Route::get('/', [CardController::class, 'index']);
         Route::get('/show', [CardController::class, 'show']);
         Route::post('/recharge', [CardController::class, 'recharge']);
+        Route::post('/recharge-stripe', [CardController::class, 'rechargeStripe']);
         Route::get('/transactions', [CardController::class, 'transactions']);
         Route::get('/history', [CardController::class, 'history']);
         Route::post('/', [CardController::class, 'store']);
@@ -132,6 +141,24 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('vehicles')->group(function () {
         Route::get('/', [CardController::class, 'listVehicles']);
         Route::post('/', [CardController::class, 'storeVehicle']);
+    });
+
+    // -------------------------------------------------------------------------
+    // Card Plans — public read (client sees available plans)
+    // -------------------------------------------------------------------------
+    Route::get('/card-plans', [CardPlanController::class, 'index']);
+
+    // -------------------------------------------------------------------------
+    // Admin — Card Plan management (TODO: add role middleware when ready)
+    // -------------------------------------------------------------------------
+    Route::prefix('admin')->group(function () {
+        Route::prefix('card-plans')->group(function () {
+            Route::post('/seed',   [CardPlanController::class, 'seed']);
+            Route::post('/assign', [CardPlanController::class, 'assignToUser']);
+            Route::post('/',       [CardPlanController::class, 'store']);
+            Route::put('/{planId}', [CardPlanController::class, 'update']);
+            Route::delete('/{planId}', [CardPlanController::class, 'destroy']);
+        });
     });
 });
   

@@ -17,11 +17,14 @@ class FuelCard extends Model
     protected $fillable = [
         'user_id',
         'vehicle_id',
+        'card_plan_id',       // Reference to CardPlan tier
+        'card_plan_name',     // Denormalized for quick display
         'card_number',
         'issuer',
         'expiry_month',
         'expiry_year',
         'balance',
+        'color',              // Inherited from CardPlan (e.g. #FFD700)
         'authorized_products',
         'status',
     ];
@@ -40,6 +43,11 @@ class FuelCard extends Model
     public function user(): \Illuminate\Database\Eloquent\Relations\BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function cardPlan(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(CardPlan::class);
     }
 
     // Optionnel si une carte est liée à un véhicule spécifique
