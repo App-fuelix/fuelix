@@ -265,6 +265,9 @@ class CardController extends Controller
             'balance_raw'    => $balance,
             'status'         => $status,
             'can_pay'        => $balance > 0 && $status === 'active',
+            'color'          => $card['color'] ?? '#1B3A6B',
+            'card_plan_name' => $card['card_plan_name'] ?? null,
+            'card_plan_id'   => $card['card_plan_id'] ?? null,
         ];
 
         if ($detailed) {

@@ -262,6 +262,16 @@ class _CardScreenState extends State<CardScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text('Digital Card', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: isDark ? Colors.white : navy)),
+                        const SizedBox(height: 4),
+                        if (_card!['card_plan_name'] != null)
+                          Text(
+                            _card!['card_plan_name'],
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: isDark ? Colors.white60 : Colors.grey,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
                         const SizedBox(height: 24),
                         _buildCardWidget(isDark),
                         const SizedBox(height: 28),
@@ -332,18 +342,33 @@ class _CardScreenState extends State<CardScreen> {
     final maskedNumber = _card!['masked_number'] ?? '**** ****';
     final validThru = _card!['valid_thru'] ?? '12/27';
     final issuer = _card!['issuer'] ?? 'Fuelix';
+    final cardColor = _card!['color'] ?? '#1B3A6B';
+    
+    // Parse card color
+    Color primaryColor;
+    try {
+      primaryColor = Color(int.parse(cardColor.replaceFirst('#', '0xFF')));
+    } catch (_) {
+      primaryColor = const Color(0xFF1B3A6B);
+    }
+    
+    // Create gradient with card color
+    final gradientColors = [
+      primaryColor,
+      primaryColor.withOpacity(0.7),
+    ];
 
     return Container(
       width: double.infinity,
       height: 200,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
-        gradient: const LinearGradient(
-          colors: [Color(0xFF1B3A6B), Color(0xFF0F2A44)],
+        gradient: LinearGradient(
+          colors: gradientColors,
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        boxShadow: [BoxShadow(color: const Color(0xFF0F2A44).withOpacity(0.4), blurRadius: 20, offset: const Offset(0, 10))],
+        boxShadow: [BoxShadow(color: primaryColor.withOpacity(0.4), blurRadius: 20, offset: const Offset(0, 10))],
       ),
       child: Stack(
         children: [
@@ -380,10 +405,29 @@ class _CardScreenState extends State<CardScreen> {
   }
 
   Widget _buildProduct(String key, IconData icon, String label, bool isDark) {
+    // Check if product is authorized by the card plan
+    final authorizedProducts = _card!['authorized_products'];
+    bool isAuthorized = false;
+    
+    if (authorizedProducts is String) {
+      try {
+        final decoded = jsonDecode(authorizedProducts);
+        if (decoded is List) {
+          isAuthorized = decoded.contains(key);
+        }
+      } catch (_) {
+        isAuthorized = false;
+      }
+    } else if (authorizedProducts is List) {
+      isAuthorized = authorizedProducts.contains(key);
+    }
+    
     final selected = _selectedProducts.contains(key);
+    final canSelect = isAuthorized;
+    
     return Expanded(
       child: GestureDetector(
-        onTap: () {
+        onTap: canSelect ? () {
           setState(() {
             if (selected) {
               _selectedProducts.remove(key);
@@ -391,30 +435,56 @@ class _CardScreenState extends State<CardScreen> {
               _selectedProducts.add(key);
             }
           });
-        },
+        } : null,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(vertical: 16),
           decoration: BoxDecoration(
-            color: selected
-                ? Colors.redAccent.withOpacity(0.12)
-                : (isDark ? const Color(0xFF1B3B5A) : Colors.white),
+            color: !canSelect
+                ? (isDark ? const Color(0xFF1B3B5A).withOpacity(0.3) : Colors.grey.withOpacity(0.1))
+                : selected
+                    ? Colors.redAccent.withOpacity(0.12)
+                    : (isDark ? const Color(0xFF1B3B5A) : Colors.white),
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: selected ? Colors.redAccent : Colors.transparent,
+              color: !canSelect
+                  ? Colors.grey.withOpacity(0.3)
+                  : selected
+                      ? Colors.redAccent
+                      : Colors.transparent,
               width: 2,
             ),
-            boxShadow: isDark ? [] : [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8)],
+            boxShadow: isDark || !canSelect ? [] : [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8)],
           ),
           child: Column(
             children: [
-              Icon(icon, color: selected ? Colors.redAccent : const Color(0xFFF2A945), size: 32),
+              Icon(
+                icon,
+                color: !canSelect
+                    ? Colors.grey
+                    : selected
+                        ? Colors.redAccent
+                        : const Color(0xFFF2A945),
+                size: 32,
+              ),
               const SizedBox(height: 8),
-              Text(label, style: TextStyle(
-                fontSize: 12,
-                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-                color: selected ? Colors.redAccent : (isDark ? Colors.white70 : Colors.black87),
-              )),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                  color: !canSelect
+                      ? Colors.grey
+                      : selected
+                          ? Colors.redAccent
+                          : (isDark ? Colors.white70 : Colors.black87),
+                ),
+              ),
+              if (!canSelect)
+                const Padding(
+                  padding: EdgeInsets.only(top: 4),
+                  child: Icon(Icons.lock, size: 14, color: Colors.grey),
+                ),
             ],
           ),
         ),

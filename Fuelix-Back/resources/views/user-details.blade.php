@@ -94,6 +94,87 @@
         </section>
     </div>
 
+    {{-- Fuel Card Section --}}
+    <section class="mt-6 rounded-xl border border-fuelix-line bg-fuelix-panel p-6 shadow-fuelix">
+        <h2 class="font-semibold">Fuel Card</h2>
+        
+        @if (!empty($fuelCards) && count($fuelCards) > 0)
+            @php
+                $card = $fuelCards[0];
+                $currentPlanId = $card['card_plan_id'] ?? 'bronze';
+            @endphp
+            
+            <div class="mt-5 grid gap-4 md:grid-cols-2">
+                <div>
+                    <label class="text-xs text-slate-500">Card Number</label>
+                    <div class="mt-2 rounded-lg border border-fuelix-line bg-[#0d1526] px-4 py-3 text-sm">
+                        {{ $card['masked_number'] ?? '**** **** **** ****' }}
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs text-slate-500">Balance</label>
+                    <div class="mt-2 rounded-lg border border-fuelix-line bg-[#0d1526] px-4 py-3 text-sm">
+                        {{ number_format((float) ($card['balance'] ?? 0), 2) }} TND
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs text-slate-500">Current Level</label>
+                    <div class="mt-2 rounded-lg border border-fuelix-line bg-[#0d1526] px-4 py-3 text-sm">
+                        {{ $card['card_plan_name'] ?? 'Bronze Card' }}
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs text-slate-500">Valid Thru</label>
+                    <div class="mt-2 rounded-lg border border-fuelix-line bg-[#0d1526] px-4 py-3 text-sm">
+                        {{ $card['valid_thru'] ?? '-' }}
+                    </div>
+                </div>
+            </div>
+
+            @if (!$isAdmin)
+                <form method="POST" action="/users/{{ $firestoreUser['id'] }}/card-level" class="mt-6">
+                    @csrf
+                    @method('PUT')
+                    
+                    <label class="text-sm font-semibold">Change Card Level</label>
+                    <div class="mt-3 grid gap-3 md:grid-cols-3">
+                        @foreach($availablePlans ?? [] as $plan)
+                            <label class="flex cursor-pointer items-center gap-3 rounded-lg border border-fuelix-line bg-[#0d1526] p-4 transition hover:border-fuelix-blue {{ $currentPlanId === $plan['id'] ? 'border-fuelix-blue bg-fuelix-blue/5' : '' }}">
+                                <input 
+                                    type="radio" 
+                                    name="plan_id" 
+                                    value="{{ $plan['id'] }}"
+                                    {{ $currentPlanId === $plan['id'] ? 'checked' : '' }}
+                                    class="h-4 w-4 text-fuelix-blue focus:ring-fuelix-blue"
+                                >
+                                <div class="flex-1">
+                                    <div class="text-sm font-semibold">{{ $plan['name'] ?? '' }}</div>
+                                    <div class="text-xs text-slate-500">Tier {{ $plan['tier_level'] ?? 1 }}</div>
+                                </div>
+                            </label>
+                        @endforeach
+                    </div>
+                    
+                    <button type="submit" class="mt-4 rounded-lg bg-fuelix-blue px-5 py-2 text-sm font-semibold">
+                        Update Card Level
+                    </button>
+                </form>
+            @endif
+        @else
+            <div class="mt-5 rounded-lg border border-fuelix-line bg-[#0d1526] p-8 text-center">
+                <p class="text-sm text-slate-400">No fuel card found for this user.</p>
+                @if (!$isAdmin)
+                    <form method="POST" action="/users/{{ $firestoreUser['id'] }}/create-card" class="mt-4">
+                        @csrf
+                        <button type="submit" class="rounded-lg bg-fuelix-blue px-5 py-2 text-sm font-semibold">
+                            Create Bronze Card
+                        </button>
+                    </form>
+                @endif
+            </div>
+        @endif
+    </section>
+
     <section class="mt-6 rounded-xl border border-fuelix-line bg-fuelix-panel p-6 shadow-fuelix">
         <h2 class="font-semibold">User Transactions</h2>
         <div class="mt-5 overflow-x-auto">

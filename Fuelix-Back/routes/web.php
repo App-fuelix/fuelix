@@ -143,12 +143,19 @@ Route::middleware('auth')->group(function () {
     Route::get('/users/{id}', function (FirestoreService $firestore, string $id) {
         $user = null;
         $transactions = [];
+        $fuelCards = [];
+        $availablePlans = [];
 
         try {
             $user = $firestore->get('users', $id);
             if ($user && strtolower((string) ($user['role'] ?? 'user')) !== 'admin') {
                 $transactions = $firestore->subList('users', $id, 'transactions');
+                $fuelCards = $firestore->subList('users', $id, 'fuel_cards');
             }
+            
+            // Récupérer les plans disponibles
+            $availablePlans = $firestore->list('card_plans');
+            usort($availablePlans, fn($a, $b) => ($a['tier_level'] ?? 0) <=> ($b['tier_level'] ?? 0));
         } catch (Throwable) {
             session()->flash('user_error', 'Unable to load user from Firestore.');
         }
@@ -156,6 +163,8 @@ Route::middleware('auth')->group(function () {
         return view('user-details', [
             'firestoreUser' => $user,
             'transactions' => $transactions,
+            'fuelCards' => $fuelCards,
+            'availablePlans' => $availablePlans,
         ]);
     });
 
@@ -185,6 +194,96 @@ Route::middleware('auth')->group(function () {
         }
 
         return back()->with('user_success', 'User updated successfully.');
+    });
+
+    Route::post('/seed-card-plans', function (FirestoreService $firestore) {
+        try {
+            $plans = [
+                [
+                    'id' => 'bronze',
+                    'name' => 'Bronze Card',
+                    'description' => 'Basic fuel access',
+                    'color' => '#CD7F32',
+                    'tier_level' => 1,
+                    'authorized_products' => json_encode(['fuel']),
+                    'is_active' => true,
+                ],
+                [
+                    'id' => 'silver',
+                    'name' => 'Silver Card',
+                    'description' => 'Fuel + Car wash',
+                    'color' => '#C0C0C0',
+                    'tier_level' => 2,
+                    'authorized_products' => json_encode(['fuel', 'carwash']),
+                    'is_active' => true,
+                ],
+                [
+                    'id' => 'gold',
+                    'name' => 'Gold Card',
+                    'description' => 'All services included',
+                    'color' => '#FFD700',
+                    'tier_level' => 3,
+                    'authorized_products' => json_encode(['fuel', 'carwash', 'lubricants']),
+                    'is_active' => true,
+                ],
+            ];
+
+            foreach ($plans as $planData) {
+                $planId = $planData['id'];
+                unset($planData['id']);
+                
+                $existing = $firestore->get('card_plans', $planId);
+                if (!$existing) {
+                    $firestore->create('card_plans', $planData);
+                }
+            }
+
+            return back()->with('user_success', 'Card plans seeded successfully.');
+        } catch (Throwable $e) {
+            return back()->withErrors(['user' => 'Unable to seed card plans: ' . $e->getMessage()]);
+        }
+    });
+
+    Route::put('/users/{id}/card-level', function (Request $request, FirestoreService $firestore, string $id) {
+        $request->validate([
+            'plan_id' => ['required', 'string'],
+        ]);
+
+        try {
+            $user = $firestore->get('users', $id);
+            if (!$user) {
+                return back()->withErrors(['user' => 'User not found.']);
+            }
+            if (strtolower((string) ($user['role'] ?? 'user')) === 'admin') {
+                return back()->withErrors(['user' => 'Cannot change admin card level.']);
+            }
+
+            // Récupérer la carte de l'utilisateur
+            $cards = $firestore->subList('users', $id, 'fuel_cards');
+            if (empty($cards)) {
+                return back()->withErrors(['user' => 'User has no fuel card.']);
+            }
+
+            $card = $cards[0];
+            
+            // Récupérer le plan sélectionné
+            $plan = $firestore->get('card_plans', $request->plan_id);
+            if (!$plan) {
+                return back()->withErrors(['user' => 'Card plan not found.']);
+            }
+
+            // Mettre à jour la carte
+            $firestore->subUpdate('users', $id, 'fuel_cards', $card['id'], [
+                'card_plan_id' => $plan['id'],
+                'card_plan_name' => $plan['name'],
+                'color' => $plan['color'],
+                'authorized_products' => $plan['authorized_products'],
+            ]);
+
+            return back()->with('user_success', "Card level updated to {$plan['name']} successfully.");
+        } catch (Throwable $e) {
+            return back()->withErrors(['user' => 'Unable to update card level: ' . $e->getMessage()]);
+        }
     });
 
     Route::post('/users/{id}/toggle', function (FirestoreService $firestore, string $id) {

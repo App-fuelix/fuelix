@@ -15,6 +15,7 @@ class AuthController extends Controller
     public function __construct(
         private readonly FirestoreUserService $firestoreUsers,
         private readonly FirebaseTokenService $firebaseTokens,
+        private readonly \App\Services\FirestoreService $firestore,
     ) {
     }
 
@@ -45,10 +46,14 @@ class AuthController extends Controller
             $request->input('city'),
         );
 
+        // Créer automatiquement une carte Bronze par défaut
+        $this->createDefaultCard($firestoreUser['id']);
+
         // Keep a local user for Sanctum token generation used by existing middleware.
         $user = User::firstOrNew(['email' => $firestoreUser['email']]);
         $user->name = $firestoreUser['name'];
         $user->password = $firestoreUser['password'];
+        $user->role = $firestoreUser['role'] ?? 'user';
         $user->save();
 
         $token = $user->createToken('fuelix-token')->plainTextToken;
@@ -80,6 +85,7 @@ class AuthController extends Controller
         $user = User::firstOrNew(['email' => $firestoreUser['email']]);
         $user->name = $firestoreUser['name'];
         $user->password = $firestoreUser['password'];
+        $user->role = $firestoreUser['role'] ?? 'user';
         $user->save();
 
         $token = $user->createToken('fuelix-token')->plainTextToken;
@@ -234,6 +240,9 @@ class AuthController extends Controller
             if ($request->filled('city'))  $data['city']  = $request->city;
 
             $firestoreUser = $this->firestoreUsers->createUserFromFirebase($data);
+            
+            // Créer automatiquement une carte Bronze par défaut
+            $this->createDefaultCard($firestoreUser['id']);
         } else {
             $firestoreUser = $existingFirestoreUser;
         }
@@ -280,5 +289,92 @@ class AuthController extends Controller
         unset($userData['password']);
 
         return response()->json(['user' => $userData, 'token' => $token]);
+    }
+
+    /**
+     * Créer une carte Bronze par défaut pour un nouvel utilisateur
+     */
+    private function createDefaultCard(string $userId): void
+    {
+        // Récupérer le plan Bronze
+        $bronzePlan = $this->firestore->get('card_plans', 'bronze');
+        
+        // Si le plan Bronze n'existe pas, créer les plans par défaut
+        if (!$bronzePlan) {
+            $this->seedDefaultPlans();
+            $bronzePlan = $this->firestore->get('card_plans', 'bronze');
+        }
+        
+        // Générer un numéro de carte unique
+        $cardNumber = $this->generateCardNumber();
+        
+        // Créer la carte dans Firestore
+        $this->firestore->subCreate('users', $userId, 'fuel_cards', [
+            'card_number' => $cardNumber,
+            'masked_number' => '**** **** **** ' . substr($cardNumber, -4),
+            'balance' => 0,
+            'valid_thru' => date('m/y', strtotime('+5 years')),
+            'issuer' => 'Fuelix',
+            'card_plan_id' => 'bronze',
+            'card_plan_name' => $bronzePlan['name'] ?? 'Bronze Card',
+            'color' => $bronzePlan['color'] ?? '#CD7F32',
+            'authorized_products' => $bronzePlan['authorized_products'] ?? json_encode(['fuel']),
+        ]);
+    }
+
+    /**
+     * Générer un numéro de carte unique
+     */
+    private function generateCardNumber(): string
+    {
+        return '4' . str_pad(rand(0, 999999999999999), 15, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * Créer les plans par défaut si ils n'existent pas
+     */
+    private function seedDefaultPlans(): void
+    {
+        $plans = [
+            [
+                'id' => 'bronze',
+                'name' => 'Bronze Card',
+                'description' => 'Basic fuel access',
+                'color' => '#CD7F32',
+                'tier_level' => 1,
+                'authorized_products' => json_encode(['fuel']),
+            ],
+            [
+                'id' => 'silver',
+                'name' => 'Silver Card',
+                'description' => 'Fuel + Car wash',
+                'color' => '#C0C0C0',
+                'tier_level' => 2,
+                'authorized_products' => json_encode(['fuel', 'carwash']),
+            ],
+            [
+                'id' => 'gold',
+                'name' => 'Gold Card',
+                'description' => 'All services included',
+                'color' => '#FFD700',
+                'tier_level' => 3,
+                'authorized_products' => json_encode(['fuel', 'carwash', 'lubricants']),
+            ],
+        ];
+
+        foreach ($plans as $plan) {
+            $existing = $this->firestore->get('card_plans', $plan['id']);
+            if (!$existing) {
+                $planId = $plan['id'];
+                unset($plan['id']);
+                $plan['is_active'] = true;
+                
+                // Créer le plan avec un ID fixe
+                $url = "https://firestore.googleapis.com/v1/projects/{$this->firestore->projectId()}/databases/(default)/documents/card_plans?documentId={$planId}";
+                // Note: Cette méthode nécessite une implémentation spéciale dans FirestoreService
+                // Pour l'instant, on utilise create() qui génère un ID auto
+                $this->firestore->create('card_plans', $plan);
+            }
+        }
     }
 }

@@ -149,9 +149,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/card-plans', [CardPlanController::class, 'index']);
 
     // -------------------------------------------------------------------------
-    // Admin — Card Plan management (TODO: add role middleware when ready)
+    // Admin — Card Plan management (protected by admin middleware)
     // -------------------------------------------------------------------------
-    Route::prefix('admin')->group(function () {
+    Route::prefix('admin')->middleware('admin')->group(function () {
+        // Users management
+        Route::get('/users', [App\Http\Controllers\Api\AdminController::class, 'listUsers']);
+        Route::get('/users/{userId}', [App\Http\Controllers\Api\AdminController::class, 'showUser']);
+        Route::put('/users/{userId}/card-level', [App\Http\Controllers\Api\AdminController::class, 'updateCardLevel']);
+        
+        // Card Plans management
         Route::prefix('card-plans')->group(function () {
             Route::post('/seed',   [CardPlanController::class, 'seed']);
             Route::post('/assign', [CardPlanController::class, 'assignToUser']);
